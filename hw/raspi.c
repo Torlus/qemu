@@ -317,7 +317,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     raspi_binfo.kernel_filename = args->kernel_filename;
     raspi_binfo.kernel_cmdline = args->kernel_cmdline;
     raspi_binfo.initrd_filename = args->initrd_filename;
-    // raspi_binfo.board_id = board_id;
+    raspi_binfo.board_id = 0xc42;
     
     // Quick and dirty "selector"
     if (args->initrd_filename 
