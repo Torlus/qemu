@@ -1142,7 +1142,7 @@ struct DisasInsn {
 };
 
 /* ====================================================================== */
-/* Miscelaneous helpers, used by several operations.  */
+/* Miscellaneous helpers, used by several operations.  */
 
 static void help_l2_shift(DisasContext *s, DisasFields *f,
                           DisasOps *o, int mask)
@@ -3088,6 +3088,7 @@ static ExitStatus op_srnm(DisasContext *s, DisasOps *o)
         break;
     case 0xb9: /* SRNMT */
         pos = 4, len = 3;
+        break;
     default:
         tcg_abort();
     }
@@ -3805,7 +3806,7 @@ static void cout_tm64(DisasContext *s, DisasOps *o)
 }
 
 /* ====================================================================== */
-/* The "PREPeration" generators.  These initialize the DisasOps.OUT fields
+/* The "PREParation" generators.  These initialize the DisasOps.OUT fields
    with the TCG register to which we will write.  Used in combination with
    the "wout" generators, in some cases we need a new temporary, and in
    some cases we can write to a TCG global.  */

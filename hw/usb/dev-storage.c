@@ -12,7 +12,7 @@
 #include "qemu/config-file.h"
 #include "hw/usb.h"
 #include "hw/usb/desc.h"
-#include "hw/scsi.h"
+#include "hw/scsi/scsi.h"
 #include "ui/console.h"
 #include "monitor/monitor.h"
 #include "sysemu/sysemu.h"
@@ -623,9 +623,9 @@ static int usb_msd_initfn_storage(USBDevice *dev)
     }
 
     usb_desc_init(dev);
-    scsi_bus_new(&s->bus, &s->dev.qdev, &usb_msd_scsi_info_storage);
+    scsi_bus_new(&s->bus, &s->dev.qdev, &usb_msd_scsi_info_storage, NULL);
     scsi_dev = scsi_bus_legacy_add_drive(&s->bus, bs, 0, !!s->removable,
-                                            s->conf.bootindex);
+                                            s->conf.bootindex, s->serial);
     if (!scsi_dev) {
         return -1;
     }
@@ -650,7 +650,7 @@ static int usb_msd_initfn_bot(USBDevice *dev)
 
     usb_desc_create_serial(dev);
     usb_desc_init(dev);
-    scsi_bus_new(&s->bus, &s->dev.qdev, &usb_msd_scsi_info_bot);
+    scsi_bus_new(&s->bus, &s->dev.qdev, &usb_msd_scsi_info_bot, NULL);
     s->bus.qbus.allow_hotplug = 0;
     usb_msd_handle_reset(dev);
 

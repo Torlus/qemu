@@ -276,7 +276,7 @@ static BlockDriverState *bdrv_new_open(const char *filename,
         drv = NULL;
     }
 
-    ret = bdrv_open(bs, filename, flags, drv);
+    ret = bdrv_open(bs, filename, NULL, flags, drv);
     if (ret < 0) {
         error_report("Could not open '%s': %s", filename, strerror(-ret));
         goto fail;
@@ -1425,12 +1425,8 @@ static int img_convert(int argc, char **argv)
             }
             assert (remainder == 0);
 
-            if (n < cluster_sectors) {
-                memset(buf + n * 512, 0, cluster_size - n * 512);
-            }
-            if (!buffer_is_zero(buf, cluster_size)) {
-                ret = bdrv_write_compressed(out_bs, sector_num, buf,
-                                            cluster_sectors);
+            if (!buffer_is_zero(buf, n * BDRV_SECTOR_SIZE)) {
+                ret = bdrv_write_compressed(out_bs, sector_num, buf, n);
                 if (ret != 0) {
                     error_report("error while compressing sector %" PRId64
                                  ": %s", sector_num, strerror(-ret));
@@ -2156,7 +2152,7 @@ static int img_rebase(int argc, char **argv)
 
         bs_old_backing = bdrv_new("old_backing");
         bdrv_get_backing_filename(bs, backing_name, sizeof(backing_name));
-        ret = bdrv_open(bs_old_backing, backing_name, BDRV_O_FLAGS,
+        ret = bdrv_open(bs_old_backing, backing_name, NULL, BDRV_O_FLAGS,
                         old_backing_drv);
         if (ret) {
             error_report("Could not open old backing file '%s'", backing_name);
@@ -2164,7 +2160,7 @@ static int img_rebase(int argc, char **argv)
         }
         if (out_baseimg[0]) {
             bs_new_backing = bdrv_new("new_backing");
-            ret = bdrv_open(bs_new_backing, out_baseimg, BDRV_O_FLAGS,
+            ret = bdrv_open(bs_new_backing, out_baseimg, NULL, BDRV_O_FLAGS,
                         new_backing_drv);
             if (ret) {
                 error_report("Could not open new backing file '%s'",

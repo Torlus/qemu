@@ -3406,27 +3406,35 @@ static void usage(void)
            "Options and associated environment variables:\n"
            "\n");
 
-    maxarglen = maxenvlen = 0;
+    /* Calculate column widths. We must always have at least enough space
+     * for the column header.
+     */
+    maxarglen = strlen("Argument");
+    maxenvlen = strlen("Env-variable");
 
     for (arginfo = arg_table; arginfo->handle_opt != NULL; arginfo++) {
+        int arglen = strlen(arginfo->argv);
+        if (arginfo->has_arg) {
+            arglen += strlen(arginfo->example) + 1;
+        }
         if (strlen(arginfo->env) > maxenvlen) {
             maxenvlen = strlen(arginfo->env);
         }
-        if (strlen(arginfo->argv) > maxarglen) {
-            maxarglen = strlen(arginfo->argv);
+        if (arglen > maxarglen) {
+            maxarglen = arglen;
         }
     }
 
-    printf("%-*s%-*sDescription\n", maxarglen+3, "Argument",
-            maxenvlen+1, "Env-variable");
+    printf("%-*s %-*s Description\n", maxarglen+1, "Argument",
+            maxenvlen, "Env-variable");
 
     for (arginfo = arg_table; arginfo->handle_opt != NULL; arginfo++) {
         if (arginfo->has_arg) {
             printf("-%s %-*s %-*s %s\n", arginfo->argv,
-                    (int)(maxarglen-strlen(arginfo->argv)), arginfo->example,
-                    maxenvlen, arginfo->env, arginfo->help);
+                   (int)(maxarglen - strlen(arginfo->argv) - 1),
+                   arginfo->example, maxenvlen, arginfo->env, arginfo->help);
         } else {
-            printf("-%-*s %-*s %s\n", maxarglen+1, arginfo->argv,
+            printf("-%-*s %-*s %s\n", maxarglen, arginfo->argv,
                     maxenvlen, arginfo->env,
                     arginfo->help);
         }
@@ -3756,13 +3764,13 @@ int main(int argc, char **argv, char **envp)
 
     env->cr[0] = CR0_PG_MASK | CR0_WP_MASK | CR0_PE_MASK;
     env->hflags |= HF_PE_MASK;
-    if (env->cpuid_features & CPUID_SSE) {
+    if (env->features[FEAT_1_EDX] & CPUID_SSE) {
         env->cr[4] |= CR4_OSFXSR_MASK;
         env->hflags |= HF_OSFXSR_MASK;
     }
 #ifndef TARGET_ABI32
     /* enable 64 bit mode if possible */
-    if (!(env->cpuid_ext2_features & CPUID_EXT2_LM)) {
+    if (!(env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM)) {
         fprintf(stderr, "The selected x86 CPU does not support 64 bit mode\n");
         exit(1);
     }

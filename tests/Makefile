@@ -24,19 +24,7 @@ gcov-files-test-string-input-visitor-y = qapi/string-input-visitor.c
 check-unit-y += tests/test-string-output-visitor$(EXESUF)
 gcov-files-test-string-output-visitor-y = qapi/string-output-visitor.c
 check-unit-y += tests/test-coroutine$(EXESUF)
-ifeq ($(CONFIG_WIN32),y)
-gcov-files-test-coroutine-y = coroutine-win32.c
-else
-ifeq ($(CONFIG_UCONTEXT_COROUTINE),y)
-gcov-files-test-coroutine-y = coroutine-ucontext.c
-else
-ifeq ($(CONFIG_SIGALTSTACK_COROUTINE),y)
-gcov-files-test-coroutine-y = coroutine-sigaltstack.c
-else
-gcov-files-test-coroutine-y = coroutine-gthread.c
-endif
-endif
-endif
+gcov-files-test-coroutine-y = coroutine-$(CONFIG_COROUTINE_BACKEND).c
 check-unit-y += tests/test-visitor-serialization$(EXESUF)
 check-unit-y += tests/test-iov$(EXESUF)
 gcov-files-test-iov-y = util/iov.c
@@ -63,9 +51,12 @@ check-block-$(CONFIG_POSIX) += tests/qemu-iotests-quick.sh
 # really in libqtest, not in the testcases themselves.
 check-qtest-i386-y = tests/fdc-test$(EXESUF)
 gcov-files-i386-y = hw/fdc.c
+check-qtest-i386-y += tests/ide-test$(EXESUF)
 check-qtest-i386-y += tests/hd-geo-test$(EXESUF)
 gcov-files-i386-y += hw/hd-geometry.c
 check-qtest-i386-y += tests/rtc-test$(EXESUF)
+check-qtest-i386-y += tests/i440fx-test$(EXESUF)
+check-qtest-i386-y += tests/fw_cfg-test$(EXESUF)
 check-qtest-x86_64-y = $(check-qtest-i386-y)
 gcov-files-i386-y += i386-softmmu/hw/mc146818rtc.c
 gcov-files-x86_64-y = $(subst i386-softmmu/,x86_64-softmmu/,$(gcov-files-i386-y))
@@ -89,6 +80,7 @@ test-obj-y = tests/check-qint.o tests/check-qstring.o tests/check-qdict.o \
 test-qapi-obj-y = tests/test-qapi-visit.o tests/test-qapi-types.o
 
 $(test-obj-y): QEMU_INCLUDES += -Itests
+QEMU_CFLAGS += -I$(SRC_PATH)/tests
 
 tests/test-x86-cpuid.o: QEMU_INCLUDES += -I$(SRC_PATH)/target-i386
 
@@ -117,7 +109,6 @@ tests/test-qmp-commands.h tests/test-qmp-marshal.c :\
 $(SRC_PATH)/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-commands.py
 	$(call quiet-command,$(PYTHON) $(SRC_PATH)/scripts/qapi-commands.py $(gen-out-type) -o tests -p "test-" < $<, "  GEN   $@")
 
-
 tests/test-string-output-visitor$(EXESUF): tests/test-string-output-visitor.o $(test-qapi-obj-y) libqemuutil.a libqemustub.a
 tests/test-string-input-visitor$(EXESUF): tests/test-string-input-visitor.o $(test-qapi-obj-y) libqemuutil.a libqemustub.a
 tests/test-qmp-output-visitor$(EXESUF): tests/test-qmp-output-visitor.o $(test-qapi-obj-y) libqemuutil.a libqemustub.a
@@ -128,11 +119,20 @@ tests/test-visitor-serialization$(EXESUF): tests/test-visitor-serialization.o $(
 
 tests/test-mul64$(EXESUF): tests/test-mul64.o libqemuutil.a
 
+libqos-obj-y = tests/libqos/pci.o tests/libqos/fw_cfg.o
+libqos-obj-y += tests/libqos/i2c.o
+libqos-pc-obj-y = $(libqos-obj-y) tests/libqos/pci-pc.o tests/libqos/fw_cfg-pc.o
+libqos-pc-obj-y += tests/libqos/malloc-pc.o
+libqos-omap-obj-y = $(libqos-obj-y) tests/libqos/i2c-omap.o
+
 tests/rtc-test$(EXESUF): tests/rtc-test.o
 tests/m48t59-test$(EXESUF): tests/m48t59-test.o
 tests/fdc-test$(EXESUF): tests/fdc-test.o
+tests/ide-test$(EXESUF): tests/ide-test.o $(libqos-pc-obj-y)
 tests/hd-geo-test$(EXESUF): tests/hd-geo-test.o
-tests/tmp105-test$(EXESUF): tests/tmp105-test.o
+tests/tmp105-test$(EXESUF): tests/tmp105-test.o $(libqos-omap-obj-y)
+tests/i440fx-test$(EXESUF): tests/i440fx-test.o $(libqos-pc-obj-y)
+tests/fw_cfg-test$(EXESUF): tests/fw_cfg-test.o $(libqos-pc-obj-y)
 
 # QTest rules
 
@@ -141,7 +141,6 @@ QTEST_TARGETS=$(foreach TARGET,$(TARGETS), $(if $(check-qtest-$(TARGET)-y), $(TA
 check-qtest-$(CONFIG_POSIX)=$(foreach TARGET,$(TARGETS), $(check-qtest-$(TARGET)-y))
 
 qtest-obj-y = tests/libqtest.o libqemuutil.a libqemustub.a
-qtest-obj-y += tests/libi2c.o tests/libi2c-omap.o
 $(check-qtest-y): $(qtest-obj-y)
 
 .PHONY: check-help

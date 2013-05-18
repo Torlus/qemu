@@ -36,22 +36,16 @@
 
 #define TARGET_LONG_SIZE (TARGET_LONG_BITS / 8)
 
-typedef int16_t target_short __attribute__ ((aligned(TARGET_SHORT_ALIGNMENT)));
-typedef uint16_t target_ushort __attribute__((aligned(TARGET_SHORT_ALIGNMENT)));
-typedef int32_t target_int __attribute__((aligned(TARGET_INT_ALIGNMENT)));
-typedef uint32_t target_uint __attribute__((aligned(TARGET_INT_ALIGNMENT)));
-typedef int64_t target_llong __attribute__((aligned(TARGET_LLONG_ALIGNMENT)));
-typedef uint64_t target_ullong __attribute__((aligned(TARGET_LLONG_ALIGNMENT)));
 /* target_ulong is the type of a virtual address */
 #if TARGET_LONG_SIZE == 4
-typedef int32_t target_long __attribute__((aligned(TARGET_LONG_ALIGNMENT)));
-typedef uint32_t target_ulong __attribute__((aligned(TARGET_LONG_ALIGNMENT)));
+typedef int32_t target_long;
+typedef uint32_t target_ulong;
 #define TARGET_FMT_lx "%08x"
 #define TARGET_FMT_ld "%d"
 #define TARGET_FMT_lu "%u"
 #elif TARGET_LONG_SIZE == 8
-typedef int64_t target_long __attribute__((aligned(TARGET_LONG_ALIGNMENT)));
-typedef uint64_t target_ulong __attribute__((aligned(TARGET_LONG_ALIGNMENT)));
+typedef int64_t target_long;
+typedef uint64_t target_ulong;
 #define TARGET_FMT_lx "%016" PRIx64
 #define TARGET_FMT_ld "%" PRId64
 #define TARGET_FMT_lu "%" PRIu64
@@ -156,8 +150,6 @@ typedef struct CPUWatchpoint {
                             accessed */                                 \
     target_ulong mem_io_vaddr; /* target virtual addr at which the      \
                                      memory was accessed */             \
-    uint32_t halted; /* Nonzero if the CPU is in suspend state */       \
-    uint32_t interrupt_request;                                         \
     CPU_COMMON_TLB                                                      \
     struct TranslationBlock *tb_jmp_cache[TB_JMP_CACHE_SIZE];           \
     /* buffer for temporaries in the code generator */                  \

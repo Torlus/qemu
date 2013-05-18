@@ -24,6 +24,8 @@
 #include "hw/qdev-core.h"
 #include "qemu/thread.h"
 
+typedef int (*WriteCoreDumpFunction)(void *buf, size_t size, void *opaque);
+
 /**
  * SECTION:cpu
  * @section_id: QEMU-cpu
@@ -44,6 +46,9 @@ typedef struct CPUState CPUState;
  * @class_by_name: Callback to map -cpu command line model name to an
  * instantiatable CPU type.
  * @reset: Callback to reset the #CPUState to its initial state.
+ * @do_interrupt: Callback for interrupt handling.
+ * @get_arch_id: Callback for getting architecture-dependent CPU ID.
+ * @vmsd: State description for migration.
  *
  * Represents a CPU family or model.
  */
@@ -55,6 +60,18 @@ typedef struct CPUClass {
     ObjectClass *(*class_by_name)(const char *cpu_model);
 
     void (*reset)(CPUState *cpu);
+    void (*do_interrupt)(CPUState *cpu);
+    int64_t (*get_arch_id)(CPUState *cpu);
+
+    const struct VMStateDescription *vmsd;
+    int (*write_elf64_note)(WriteCoreDumpFunction f, CPUState *cpu,
+                            int cpuid, void *opaque);
+    int (*write_elf64_qemunote)(WriteCoreDumpFunction f, CPUState *cpu,
+                                void *opaque);
+    int (*write_elf32_note)(WriteCoreDumpFunction f, CPUState *cpu,
+                            int cpuid, void *opaque);
+    int (*write_elf32_qemunote)(WriteCoreDumpFunction f, CPUState *cpu,
+                                void *opaque);
 } CPUClass;
 
 struct KVMState;
@@ -69,6 +86,8 @@ struct kvm_run;
  * @host_tid: Host thread ID.
  * @running: #true if CPU is currently running (usermode).
  * @created: Indicates whether the CPU thread has been successfully created.
+ * @interrupt_request: Indicates a pending interrupt request.
+ * @halted: Nonzero if the CPU is in suspended state.
  * @stop: Indicates a pending stop request.
  * @stopped: Indicates the CPU has been artificially stopped.
  * @tcg_exit_req: Set to force TCG to stop executing linked TBs for this
@@ -103,6 +122,7 @@ struct CPUState {
     bool stopped;
     volatile sig_atomic_t exit_request;
     volatile sig_atomic_t tcg_exit_req;
+    uint32_t interrupt_request;
 
     void *env_ptr; /* CPUArchState */
     struct TranslationBlock *current_tb;
@@ -114,8 +134,48 @@ struct CPUState {
 
     /* TODO Move common fields from CPUArchState here. */
     int cpu_index; /* used by alpha TCG */
+    uint32_t halted; /* used by alpha, cris, ppc TCG */
 };
 
+/**
+ * cpu_write_elf64_note:
+ * @f: pointer to a function that writes memory to a file
+ * @cpu: The CPU whose memory is to be dumped
+ * @cpuid: ID number of the CPU
+ * @opaque: pointer to the CPUState struct
+ */
+int cpu_write_elf64_note(WriteCoreDumpFunction f, CPUState *cpu,
+                         int cpuid, void *opaque);
+
+/**
+ * cpu_write_elf64_qemunote:
+ * @f: pointer to a function that writes memory to a file
+ * @cpu: The CPU whose memory is to be dumped
+ * @cpuid: ID number of the CPU
+ * @opaque: pointer to the CPUState struct
+ */
+int cpu_write_elf64_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
+                             void *opaque);
+
+/**
+ * cpu_write_elf32_note:
+ * @f: pointer to a function that writes memory to a file
+ * @cpu: The CPU whose memory is to be dumped
+ * @cpuid: ID number of the CPU
+ * @opaque: pointer to the CPUState struct
+ */
+int cpu_write_elf32_note(WriteCoreDumpFunction f, CPUState *cpu,
+                         int cpuid, void *opaque);
+
+/**
+ * cpu_write_elf32_qemunote:
+ * @f: pointer to a function that writes memory to a file
+ * @cpu: The CPU whose memory is to be dumped
+ * @cpuid: ID number of the CPU
+ * @opaque: pointer to the CPUState struct
+ */
+int cpu_write_elf32_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
+                             void *opaque);
 
 /**
  * cpu_reset:
@@ -133,6 +193,27 @@ void cpu_reset(CPUState *cpu);
  * Returns: A #CPUClass or %NULL if not matching class is found.
  */
 ObjectClass *cpu_class_by_name(const char *typename, const char *cpu_model);
+
+/**
+ * cpu_class_set_vmsd:
+ * @cc: CPU class
+ * @value: Value to set. Unused for %CONFIG_USER_ONLY.
+ *
+ * Sets #VMStateDescription for @cc.
+ *
+ * The @value argument is intentionally discarded for the non-softmmu targets
+ * to avoid linker errors or excessive preprocessor usage. If this behavior
+ * is undesired, you should assign #CPUState.vmsd directly instead.
+ */
+#ifndef CONFIG_USER_ONLY
+static inline void cpu_class_set_vmsd(CPUClass *cc,
+                                      const struct VMStateDescription *value)
+{
+    cc->vmsd = value;
+}
+#else
+#define cpu_class_set_vmsd(cc, value) ((cc)->vmsd = NULL)
+#endif
 
 /**
  * qemu_cpu_has_work:
@@ -184,6 +265,15 @@ bool cpu_is_stopped(CPUState *cpu);
 void run_on_cpu(CPUState *cpu, void (*func)(void *data), void *data);
 
 /**
+ * qemu_for_each_cpu:
+ * @func: The function to be executed.
+ * @data: Data to pass to the function.
+ *
+ * Executes @func for each CPU.
+ */
+void qemu_for_each_cpu(void (*func)(CPUState *cpu, void *data), void *data);
+
+/**
  * qemu_get_cpu:
  * @index: The CPUState@cpu_index value of the CPU to obtain.
  *
@@ -193,5 +283,55 @@ void run_on_cpu(CPUState *cpu, void (*func)(void *data), void *data);
  */
 CPUState *qemu_get_cpu(int index);
 
+/**
+ * cpu_exists:
+ * @id: Guest-exposed CPU ID to lookup.
+ *
+ * Search for CPU with specified ID.
+ *
+ * Returns: %true - CPU is found, %false - CPU isn't found.
+ */
+bool cpu_exists(int64_t id);
+
+#ifndef CONFIG_USER_ONLY
+
+typedef void (*CPUInterruptHandler)(CPUState *, int);
+
+extern CPUInterruptHandler cpu_interrupt_handler;
+
+/**
+ * cpu_interrupt:
+ * @cpu: The CPU to set an interrupt on.
+ * @mask: The interupts to set.
+ *
+ * Invokes the interrupt handler.
+ */
+static inline void cpu_interrupt(CPUState *cpu, int mask)
+{
+    cpu_interrupt_handler(cpu, mask);
+}
+
+#else /* USER_ONLY */
+
+void cpu_interrupt(CPUState *cpu, int mask);
+
+#endif /* USER_ONLY */
+
+/**
+ * cpu_reset_interrupt:
+ * @cpu: The CPU to clear the interrupt on.
+ * @mask: The interrupt mask to clear.
+ *
+ * Resets interrupts on the vCPU @cpu.
+ */
+void cpu_reset_interrupt(CPUState *cpu, int mask);
+
+/**
+ * cpu_resume:
+ * @cpu: The CPU to resume.
+ *
+ * Resumes CPU, i.e. puts CPU into runnable state.
+ */
+void cpu_resume(CPUState *cpu);
 
 #endif

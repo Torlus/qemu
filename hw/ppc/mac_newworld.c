@@ -47,18 +47,18 @@
  *
  */
 #include "hw/hw.h"
-#include "hw/ppc.h"
+#include "hw/ppc/ppc.h"
 #include "hw/ppc/mac.h"
-#include "hw/adb.h"
-#include "hw/mac_dbdma.h"
-#include "hw/nvram.h"
+#include "hw/input/adb.h"
+#include "hw/ppc/mac_dbdma.h"
+#include "hw/timer/m48t59.h"
 #include "hw/pci/pci.h"
 #include "net/net.h"
 #include "sysemu/sysemu.h"
 #include "hw/boards.h"
-#include "hw/fw_cfg.h"
-#include "hw/escc.h"
-#include "hw/openpic.h"
+#include "hw/nvram/fw_cfg.h"
+#include "hw/char/escc.h"
+#include "hw/ppc/openpic.h"
 #include "hw/ide.h"
 #include "hw/loader.h"
 #include "elf.h"
@@ -126,6 +126,8 @@ static void ppc_core99_reset(void *opaque)
     PowerPCCPU *cpu = opaque;
 
     cpu_reset(CPU(cpu));
+    /* 970 CPUs want to get their initial IP as part of their boot protocol */
+    cpu->env.nip = PROM_ADDR + 0x100;
 }
 
 /* PowerPC Mac99 hardware initialisation */

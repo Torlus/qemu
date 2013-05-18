@@ -109,6 +109,11 @@ static int qemu_signal_init(void)
 
 static AioContext *qemu_aio_context;
 
+AioContext *qemu_get_aio_context(void)
+{
+    return qemu_aio_context;
+}
+
 void qemu_notify_event(void)
 {
     if (!qemu_aio_context) {
@@ -183,14 +188,39 @@ static void glib_pollfds_poll(void)
     }
 }
 
+#define MAX_MAIN_LOOP_SPIN (1000)
+
 static int os_host_main_loop_wait(uint32_t timeout)
 {
     int ret;
+    static int spin_counter;
 
     glib_pollfds_fill(&timeout);
 
+    /* If the I/O thread is very busy or we are incorrectly busy waiting in
+     * the I/O thread, this can lead to starvation of the BQL such that the
+     * VCPU threads never run.  To make sure we can detect the later case,
+     * print a message to the screen.  If we run into this condition, create
+     * a fake timeout in order to give the VCPU threads a chance to run.
+     */
+    if (spin_counter > MAX_MAIN_LOOP_SPIN) {
+        static bool notified;
+
+        if (!notified) {
+            fprintf(stderr,
+                    "main-loop: WARNING: I/O thread spun for %d iterations\n",
+                    MAX_MAIN_LOOP_SPIN);
+            notified = true;
+        }
+
+        timeout = 1;
+    }
+
     if (timeout > 0) {
+        spin_counter = 0;
         qemu_mutex_unlock_iothread();
+    } else {
+        spin_counter++;
     }
 
     ret = g_poll((GPollFD *)gpollfds->data, gpollfds->len, timeout);
@@ -303,11 +333,11 @@ static int pollfds_fill(GArray *pollfds, fd_set *rfds, fd_set *wfds,
         GPollFD *pfd = &g_array_index(pollfds, GPollFD, i);
         int fd = pfd->fd;
         int events = pfd->events;
-        if (events & (G_IO_IN | G_IO_HUP | G_IO_ERR)) {
+        if (events & G_IO_IN) {
             FD_SET(fd, rfds);
             nfds = MAX(nfds, fd);
         }
-        if (events & (G_IO_OUT | G_IO_ERR)) {
+        if (events & G_IO_OUT) {
             FD_SET(fd, wfds);
             nfds = MAX(nfds, fd);
         }
@@ -330,10 +360,10 @@ static void pollfds_poll(GArray *pollfds, int nfds, fd_set *rfds,
         int revents = 0;
 
         if (FD_ISSET(fd, rfds)) {
-            revents |= G_IO_IN | G_IO_HUP | G_IO_ERR;
+            revents |= G_IO_IN;
         }
         if (FD_ISSET(fd, wfds)) {
-            revents |= G_IO_OUT | G_IO_ERR;
+            revents |= G_IO_OUT;
         }
         if (FD_ISSET(fd, xfds)) {
             revents |= G_IO_PRI;
@@ -362,6 +392,20 @@ static int os_host_main_loop_wait(uint32_t timeout)
     }
     if (ret != 0) {
         return ret;
+    }
+
+    FD_ZERO(&rfds);
+    FD_ZERO(&wfds);
+    FD_ZERO(&xfds);
+    nfds = pollfds_fill(gpollfds, &rfds, &wfds, &xfds);
+    if (nfds >= 0) {
+        select_ret = select(nfds + 1, &rfds, &wfds, &xfds, &tv0);
+        if (select_ret != 0) {
+            timeout = 0;
+        }
+        if (select_ret > 0) {
+            pollfds_poll(gpollfds, nfds, &rfds, &wfds, &xfds);
+        }
     }
 
     g_main_context_prepare(context, &max_priority);
@@ -394,24 +438,6 @@ static int os_host_main_loop_wait(uint32_t timeout)
 
     if (g_main_context_check(context, max_priority, poll_fds, n_poll_fds)) {
         g_main_context_dispatch(context);
-    }
-
-    /* Call select after g_poll to avoid a useless iteration and therefore
-     * improve socket latency.
-     */
-
-    FD_ZERO(&rfds);
-    FD_ZERO(&wfds);
-    FD_ZERO(&xfds);
-    nfds = pollfds_fill(gpollfds, &rfds, &wfds, &xfds);
-    if (nfds >= 0) {
-        select_ret = select(nfds + 1, &rfds, &wfds, &xfds, &tv0);
-        if (select_ret != 0) {
-            timeout = 0;
-        }
-        if (select_ret > 0) {
-            pollfds_poll(gpollfds, nfds, &rfds, &wfds, &xfds);
-        }
     }
 
     return select_ret || g_poll_ret;

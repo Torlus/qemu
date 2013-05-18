@@ -11,7 +11,7 @@
  *
  */
 #include "libqtest.h"
-#include "hw/mc146818rtc_regs.h"
+#include "hw/timer/mc146818rtc_regs.h"
 
 #include <glib.h>
 #include <stdio.h>
@@ -565,8 +565,8 @@ int main(int argc, char **argv)
     qtest_add_func("/rtc/basic/bcd-12h", basic_12h_bcd);
     qtest_add_func("/rtc/set-year/20xx", set_year_20xx);
     qtest_add_func("/rtc/set-year/1980", set_year_1980);
-    qtest_add_func("/rtc/register_b_set_flag", register_b_set_flag);
-    qtest_add_func("/rtc/fuzz-registers", fuzz_registers);
+    qtest_add_func("/rtc/misc/register_b_set_flag", register_b_set_flag);
+    qtest_add_func("/rtc/misc/fuzz-registers", fuzz_registers);
     ret = g_test_run();
 
     if (s) {

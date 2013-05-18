@@ -169,30 +169,38 @@ static void cris_cpu_initfn(Object *obj)
 
 static void crisv8_cpu_class_init(ObjectClass *oc, void *data)
 {
+    CPUClass *cc = CPU_CLASS(oc);
     CRISCPUClass *ccc = CRIS_CPU_CLASS(oc);
 
     ccc->vr = 8;
+    cc->do_interrupt = crisv10_cpu_do_interrupt;
 }
 
 static void crisv9_cpu_class_init(ObjectClass *oc, void *data)
 {
+    CPUClass *cc = CPU_CLASS(oc);
     CRISCPUClass *ccc = CRIS_CPU_CLASS(oc);
 
     ccc->vr = 9;
+    cc->do_interrupt = crisv10_cpu_do_interrupt;
 }
 
 static void crisv10_cpu_class_init(ObjectClass *oc, void *data)
 {
+    CPUClass *cc = CPU_CLASS(oc);
     CRISCPUClass *ccc = CRIS_CPU_CLASS(oc);
 
     ccc->vr = 10;
+    cc->do_interrupt = crisv10_cpu_do_interrupt;
 }
 
 static void crisv11_cpu_class_init(ObjectClass *oc, void *data)
 {
+    CPUClass *cc = CPU_CLASS(oc);
     CRISCPUClass *ccc = CRIS_CPU_CLASS(oc);
 
     ccc->vr = 11;
+    cc->do_interrupt = crisv10_cpu_do_interrupt;
 }
 
 static void crisv32_cpu_class_init(ObjectClass *oc, void *data)
@@ -243,6 +251,7 @@ static void cris_cpu_class_init(ObjectClass *oc, void *data)
     cc->reset = cris_cpu_reset;
 
     cc->class_by_name = cris_cpu_class_by_name;
+    cc->do_interrupt = cris_cpu_do_interrupt;
 }
 
 static const TypeInfo cris_cpu_type_info = {

@@ -1775,6 +1775,7 @@ static void gen_rot_rm_T1(DisasContext *s, int ot, int op1, int is_right)
     if (is_right) {
         tcg_gen_shri_tl(cpu_cc_src2, cpu_T[0], mask - 1);
         tcg_gen_shri_tl(cpu_cc_dst, cpu_T[0], mask);
+        tcg_gen_andi_tl(cpu_cc_dst, cpu_cc_dst, 1);
     } else {
         tcg_gen_shri_tl(cpu_cc_src2, cpu_T[0], mask);
         tcg_gen_andi_tl(cpu_cc_dst, cpu_T[0], 1);
@@ -1870,6 +1871,7 @@ static void gen_rot_rm_im(DisasContext *s, int ot, int op1, int op2,
         if (is_right) {
             tcg_gen_shri_tl(cpu_cc_src2, cpu_T[0], mask - 1);
             tcg_gen_shri_tl(cpu_cc_dst, cpu_T[0], mask);
+            tcg_gen_andi_tl(cpu_cc_dst, cpu_cc_dst, 1);
         } else {
             tcg_gen_shri_tl(cpu_cc_src2, cpu_T[0], mask);
             tcg_gen_andi_tl(cpu_cc_dst, cpu_T[0], 1);
@@ -3147,6 +3149,9 @@ struct SSEOpHelper_eppi {
 #define SSE41_OP(x) { { NULL, gen_helper_ ## x ## _xmm }, CPUID_EXT_SSE41 }
 #define SSE42_OP(x) { { NULL, gen_helper_ ## x ## _xmm }, CPUID_EXT_SSE42 }
 #define SSE41_SPECIAL { { NULL, SSE_SPECIAL }, CPUID_EXT_SSE41 }
+#define PCLMULQDQ_OP(x) { { NULL, gen_helper_ ## x ## _xmm }, \
+        CPUID_EXT_PCLMULQDQ }
+#define AESNI_OP(x) { { NULL, gen_helper_ ## x ## _xmm }, CPUID_EXT_AES }
 
 static const struct SSEOpHelper_epp sse_op_table6[256] = {
     [0x00] = SSSE3_OP(pshufb),
@@ -3195,6 +3200,11 @@ static const struct SSEOpHelper_epp sse_op_table6[256] = {
     [0x3f] = SSE41_OP(pmaxud),
     [0x40] = SSE41_OP(pmulld),
     [0x41] = SSE41_OP(phminposuw),
+    [0xdb] = AESNI_OP(aesimc),
+    [0xdc] = AESNI_OP(aesenc),
+    [0xdd] = AESNI_OP(aesenclast),
+    [0xde] = AESNI_OP(aesdec),
+    [0xdf] = AESNI_OP(aesdeclast),
 };
 
 static const struct SSEOpHelper_eppi sse_op_table7[256] = {
@@ -3216,10 +3226,12 @@ static const struct SSEOpHelper_eppi sse_op_table7[256] = {
     [0x40] = SSE41_OP(dpps),
     [0x41] = SSE41_OP(dppd),
     [0x42] = SSE41_OP(mpsadbw),
+    [0x44] = PCLMULQDQ_OP(pclmulqdq),
     [0x60] = SSE42_OP(pcmpestrm),
     [0x61] = SSE42_OP(pcmpestri),
     [0x62] = SSE42_OP(pcmpistrm),
     [0x63] = SSE42_OP(pcmpistri),
+    [0xdf] = AESNI_OP(aeskeygenassist),
 };
 
 static void gen_sse(CPUX86State *env, DisasContext *s, int b,
@@ -4200,7 +4212,7 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                         carry_in = carry_out;
                         break;
                     default:
-                        end_op = (b == 0x1f6 ? CC_OP_ADCX : CC_OP_ADCOX);
+                        end_op = (b == 0x1f6 ? CC_OP_ADCX : CC_OP_ADOX);
                         break;
                     }
                     /* If we can't reuse carry-out, get it out of EFLAGS.  */
@@ -4404,9 +4416,9 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                     if (mod == 3)
                         gen_op_mov_TN_reg(OT_LONG, 0, rm);
                     else
-                        tcg_gen_qemu_ld8u(cpu_tmp0, cpu_A0,
+                        tcg_gen_qemu_ld8u(cpu_T[0], cpu_A0,
                                         (s->mem_index >> 2) - 1);
-                    tcg_gen_st8_tl(cpu_tmp0, cpu_env, offsetof(CPUX86State,
+                    tcg_gen_st8_tl(cpu_T[0], cpu_env, offsetof(CPUX86State,
                                             xmm_regs[reg].XMM_B(val & 15)));
                     break;
                 case 0x21: /* insertps */
@@ -4746,7 +4758,7 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
             }
             s->pc++;
 
-            /* 4.1.1-4.1.3: No preceeding lock, 66, f2, f3, or rex prefixes. */
+            /* 4.1.1-4.1.3: No preceding lock, 66, f2, f3, or rex prefixes. */
             if (prefixes & (PREFIX_REPZ | PREFIX_REPNZ
                             | PREFIX_LOCK | PREFIX_DATA)) {
                 goto illegal_op;
@@ -8279,11 +8291,11 @@ static inline void gen_intermediate_code_internal(CPUX86State *env,
     if (flags & HF_SOFTMMU_MASK) {
         dc->mem_index = (cpu_mmu_index(env) + 1) << 2;
     }
-    dc->cpuid_features = env->cpuid_features;
-    dc->cpuid_ext_features = env->cpuid_ext_features;
-    dc->cpuid_ext2_features = env->cpuid_ext2_features;
-    dc->cpuid_ext3_features = env->cpuid_ext3_features;
-    dc->cpuid_7_0_ebx_features = env->cpuid_7_0_ebx_features;
+    dc->cpuid_features = env->features[FEAT_1_EDX];
+    dc->cpuid_ext_features = env->features[FEAT_1_ECX];
+    dc->cpuid_ext2_features = env->features[FEAT_8000_0001_EDX];
+    dc->cpuid_ext3_features = env->features[FEAT_8000_0001_ECX];
+    dc->cpuid_7_0_ebx_features = env->features[FEAT_7_0_EBX];
 #ifdef TARGET_X86_64
     dc->lma = (flags >> HF_LMA_SHIFT) & 1;
     dc->code64 = (flags >> HF_CS64_SHIFT) & 1;

@@ -63,11 +63,16 @@ typedef struct PowerPCCPUClass {
     powerpc_input_t bus_model;
     uint32_t flags;
     int bfd_mach;
+    uint32_t l1_dcache_size, l1_icache_size;
 #if defined(TARGET_PPC64)
     const struct ppc_segment_page_sizes *sps;
 #endif
     void (*init_proc)(CPUPPCState *env);
     int  (*check_pow)(CPUPPCState *env);
+#if defined(CONFIG_SOFTMMU)
+    int (*handle_mmu_fault)(CPUPPCState *env, target_ulong eaddr, int rwx,
+                            int mmu_idx);
+#endif
 } PowerPCCPUClass;
 
 /**
@@ -94,5 +99,7 @@ static inline PowerPCCPU *ppc_env_get_cpu(CPUPPCState *env)
 #define ENV_OFFSET offsetof(PowerPCCPU, env)
 
 PowerPCCPUClass *ppc_cpu_class_by_pvr(uint32_t pvr);
+
+void ppc_cpu_do_interrupt(CPUState *cpu);
 
 #endif

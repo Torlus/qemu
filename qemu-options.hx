@@ -161,14 +161,14 @@ ETEXI
 
 DEF("boot", HAS_ARG, QEMU_OPTION_boot,
     "-boot [order=drives][,once=drives][,menu=on|off]\n"
-    "      [,splash=sp_name][,splash-time=sp_time][,reboot-timeout=rb_time]\n"
+    "      [,splash=sp_name][,splash-time=sp_time][,reboot-timeout=rb_time][,strict=on|off]\n"
     "                'drives': floppy (a), hard disk (c), CD-ROM (d), network (n)\n"
     "                'sp_name': the file's name that would be passed to bios as logo picture, if menu=on\n"
     "                'sp_time': the period that splash picture last if menu=on, unit is ms\n"
     "                'rb_timeout': the timeout before guest reboot when boot failed, unit is ms\n",
     QEMU_ARCH_ALL)
 STEXI
-@item -boot [order=@var{drives}][,once=@var{drives}][,menu=on|off][,splash=@var{sp_name}][,splash-time=@var{sp_time}][,reboot-timeout=@var{rb_timeout}]
+@item -boot [order=@var{drives}][,once=@var{drives}][,menu=on|off][,splash=@var{sp_name}][,splash-time=@var{sp_time}][,reboot-timeout=@var{rb_timeout}][,strict=on|off]
 @findex -boot
 Specify boot order @var{drives} as a string of drive letters. Valid
 drive letters depend on the target achitecture. The x86 PC uses: a, b
@@ -191,6 +191,10 @@ A timeout could be passed to bios, guest will pause for @var{rb_timeout} ms
 when boot failed, then reboot. If @var{rb_timeout} is '-1', guest will not
 reboot, qemu passes '-1' to bios by default. Currently Seabios for X86
 system support it.
+
+Do strict boot via @option{strict=on} as far as firmware/BIOS
+supports it. This only effects when boot priority is changed by
+bootindex options. The default is non-strict boot.
 
 @example
 # try to boot from network first, then from hard disk
@@ -1119,10 +1123,12 @@ is a TCP port number, not a display number.
 @item websocket
 
 Opens an additional TCP listening port dedicated to VNC Websocket connections.
-By defintion the Websocket port is 5700+@var{display}. If @var{host} is
+By definition the Websocket port is 5700+@var{display}. If @var{host} is
 specified connections will only be allowed from this host.
 As an alternative the Websocket port could be specified by using
 @code{websocket}=@var{port}.
+TLS encryption for the Websocket connection is supported if the required
+certificates are specified with the VNC option @option{x509}.
 
 @item password
 
@@ -1356,7 +1362,7 @@ DEF("net", HAS_ARG, QEMU_OPTION_net,
     "-net tap[,vlan=n][,name=str],ifname=name\n"
     "                connect the host TAP network interface to VLAN 'n'\n"
 #else
-    "-net tap[,vlan=n][,name=str][,fd=h][,fds=x:y:...:z][,ifname=name][,script=file][,downscript=dfile][,helper=helper][,sndbuf=nbytes][,vnet_hdr=on|off][,vhost=on|off][,vhostfd=h][,vhostfds=x:y:...:z][,vhostforce=on|off]\n"
+    "-net tap[,vlan=n][,name=str][,fd=h][,fds=x:y:...:z][,ifname=name][,script=file][,downscript=dfile][,helper=helper][,sndbuf=nbytes][,vnet_hdr=on|off][,vhost=on|off][,vhostfd=h][,vhostfds=x:y:...:z][,vhostforce=on|off][,queues=n]\n"
     "                connect the host TAP network interface to VLAN 'n'\n"
     "                use network scripts 'file' (default=" DEFAULT_NETWORK_SCRIPT ")\n"
     "                to configure it and 'dfile' (default=" DEFAULT_NETWORK_DOWN_SCRIPT ")\n"
@@ -1375,6 +1381,7 @@ DEF("net", HAS_ARG, QEMU_OPTION_net,
     "                use vhostforce=on to force vhost on for non-MSIX virtio guests\n"
     "                use 'vhostfd=h' to connect to an already opened vhost net device\n"
     "                use 'vhostfds=x:y:...:z to connect to multiple already opened vhost net devices\n"
+    "                use 'queues=n' to specify the number of queues to be created for multiqueue TAP\n"
     "-net bridge[,vlan=n][,name=str][,br=bridge][,helper=helper]\n"
     "                connects a host TAP network interface to a host bridge device 'br'\n"
     "                (default=" DEFAULT_BRIDGE_INTERFACE ") using the program 'helper'\n"
@@ -2102,6 +2109,18 @@ Example for Unix Domain Sockets
 qemu-system-i386 --drive file=nbd:unix:/tmp/nbd-socket
 @end example
 
+@item SSH
+QEMU supports SSH (Secure Shell) access to remote disks.
+
+Examples:
+@example
+qemu-system-i386 -drive file=ssh://user@@host/path/to/disk.img
+qemu-system-i386 -drive file.driver=ssh,file.user=user,file.host=host,file.port=22,file.path=/path/to/disk.img
+@end example
+
+Currently authentication must be done using ssh-agent.  Other
+authentication methods may be supported in future.
+
 @item Sheepdog
 Sheepdog is a distributed storage system for QEMU.
 QEMU supports using either local sheepdog devices or remote networked
@@ -2132,7 +2151,7 @@ gluster[+transport]://[server[:port]]/volname/image[?socket=...]
 
 Example
 @example
-qemu-system-x86_84 --drive file=gluster://192.0.2.1/testvol/a.img
+qemu-system-x86_64 --drive file=gluster://192.0.2.1/testvol/a.img
 @end example
 
 See also @url{http://www.gluster.org}.
@@ -2216,6 +2235,81 @@ STEXI
 @end table
 ETEXI
 DEFHEADING()
+
+#ifdef CONFIG_TPM
+DEFHEADING(TPM device options:)
+
+DEF("tpmdev", HAS_ARG, QEMU_OPTION_tpmdev, \
+    "-tpmdev passthrough,id=id[,path=path][,cancel-path=path]\n"
+    "                use path to provide path to a character device; default is /dev/tpm0\n"
+    "                use cancel-path to provide path to TPM's cancel sysfs entry; if\n"
+    "                not provided it will be searched for in /sys/class/misc/tpm?/device\n",
+    QEMU_ARCH_ALL)
+STEXI
+
+The general form of a TPM device option is:
+@table @option
+
+@item -tpmdev @var{backend} ,id=@var{id} [,@var{options}]
+@findex -tpmdev
+Backend type must be:
+@option{passthrough}.
+
+The specific backend type will determine the applicable options.
+The @code{-tpmdev} option creates the TPM backend and requires a
+@code{-device} option that specifies the TPM frontend interface model.
+
+Options to each backend are described below.
+
+Use 'help' to print all available TPM backend types.
+@example
+qemu -tpmdev help
+@end example
+
+@item -tpmdev passthrough, id=@var{id}, path=@var{path}, cancel-path=@var{cancel-path}
+
+(Linux-host only) Enable access to the host's TPM using the passthrough
+driver.
+
+@option{path} specifies the path to the host's TPM device, i.e., on
+a Linux host this would be @code{/dev/tpm0}.
+@option{path} is optional and by default @code{/dev/tpm0} is used.
+
+@option{cancel-path} specifies the path to the host TPM device's sysfs
+entry allowing for cancellation of an ongoing TPM command.
+@option{cancel-path} is optional and by default QEMU will search for the
+sysfs entry to use.
+
+Some notes about using the host's TPM with the passthrough driver:
+
+The TPM device accessed by the passthrough driver must not be
+used by any other application on the host.
+
+Since the host's firmware (BIOS/UEFI) has already initialized the TPM,
+the VM's firmware (BIOS/UEFI) will not be able to initialize the
+TPM again and may therefore not show a TPM-specific menu that would
+otherwise allow the user to configure the TPM, e.g., allow the user to
+enable/disable or activate/deactivate the TPM.
+Further, if TPM ownership is released from within a VM then the host's TPM
+will get disabled and deactivated. To enable and activate the
+TPM again afterwards, the host has to be rebooted and the user is
+required to enter the firmware's menu to enable and activate the TPM.
+If the TPM is left disabled and/or deactivated most TPM commands will fail.
+
+To create a passthrough TPM use the following two options:
+@example
+-tpmdev passthrough,id=tpm0 -device tpm-tis,tpmdev=tpm0
+@end example
+Note that the @code{-tpmdev} id is @code{tpm0} and is referenced by
+@code{tpmdev=tpm0} in the device option.
+
+@end table
+
+ETEXI
+
+DEFHEADING()
+
+#endif
 
 DEFHEADING(Linux/Multiboot boot specific:)
 STEXI
@@ -2489,6 +2583,19 @@ STEXI
 @item -S
 @findex -S
 Do not start CPU at startup (you must type 'c' in the monitor).
+ETEXI
+
+DEF("realtime", HAS_ARG, QEMU_OPTION_realtime,
+    "-realtime [mlock=on|off]\n"
+    "                run qemu with realtime features\n"
+    "                mlock=on|off controls mlock support (default: on)\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -realtime mlock=on|off
+@findex -realtime
+Run qemu with realtime features.
+mlocking qemu and guest memory can be enabled via @option{mlock=on}
+(enabled by default).
 ETEXI
 
 DEF("gdb", HAS_ARG, QEMU_OPTION_gdb, \
