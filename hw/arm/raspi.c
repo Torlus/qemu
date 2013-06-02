@@ -47,7 +47,7 @@ const uint32_t bootloader_0[] = {
 0x00008000
 };
 
-const uint32_t bootloader_400[] = {
+uint32_t bootloader_100[] = {
 0x00000005,
 0x54410001,
 0x00000001,
@@ -55,7 +55,7 @@ const uint32_t bootloader_400[] = {
 0x00000000,
 0x00000004,
 0x54410002,
-0x08000000,
+0x08000000, /* This value will be overwritten by dynamically calculated memory size */
 0x00000000,
 0x00000000,
 0x00000000
@@ -110,6 +110,8 @@ static void raspi_init(QEMUMachineInitArgs *args)
     
     bcm2835_vcram_base = args->ram_size - VCRAM_SIZE;
     
+    bootloader_100[7] = bcm2835_vcram_base; /* Write real RAM size in ATAG structure */
+
     memory_region_init_ram(bcm2835_ram, "raspi.ram", bcm2835_vcram_base);
     vmstate_register_ram_global(bcm2835_ram);
 
@@ -326,8 +328,8 @@ static void raspi_init(QEMUMachineInitArgs *args)
         for(n = 0; n < ARRAY_SIZE(bootloader_0); n++) {
             stl_phys( (n << 2), bootloader_0[n]);
         }
-        for(n = 0; n < ARRAY_SIZE(bootloader_400); n++) {
-            stl_phys( 0x400 + (n << 2), bootloader_400[n]);
+        for(n = 0; n < ARRAY_SIZE(bootloader_100); n++) {
+            stl_phys( 0x100 + (n << 2), bootloader_100[n]);
         }
         load_image_targphys(args->initrd_filename,
                             0x8000,
