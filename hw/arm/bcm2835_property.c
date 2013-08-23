@@ -14,6 +14,9 @@
 
 //#define LOG_REG_ACCESS
 
+#define TYPE_BCM2835_PROPERTY "bcm2835_property"
+#define BCM2835_PROPERTY(obj) OBJECT_CHECK(bcm2835_property_state, (obj), TYPE_BCM2835_PROPERTY)
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -367,18 +370,20 @@ static const VMStateDescription vmstate_bcm2835_property = {
     }
 };
 
-static int bcm2835_property_init(SysBusDevice *dev)
+static int bcm2835_property_init(SysBusDevice *sbd)
 {
-    bcm2835_property_state *s = FROM_SYSBUS(bcm2835_property_state, dev);
-    
+    // bcm2835_property_state *s = FROM_SYSBUS(bcm2835_property_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_property_state *s = BCM2835_PROPERTY(dev);
+
     s->pending = 0;
     s->addr = 0;
     
-    sysbus_init_irq(dev, &s->mbox_irq);
-    memory_region_init_io(&s->iomem, &bcm2835_property_ops, s, 
+    sysbus_init_irq(sbd, &s->mbox_irq);
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_property_ops, s, 
         "bcm2835_property", 0x10);
-    sysbus_init_mmio(dev, &s->iomem);
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_property, s);
+    sysbus_init_mmio(sbd, &s->iomem);
+    vmstate_register(dev, -1, &vmstate_bcm2835_property, s);
 
     return 0;
 }

@@ -47,6 +47,7 @@
 #include "hw/nvram/eeprom93xx.h"
 #include "sysemu/sysemu.h"
 #include "sysemu/dma.h"
+#include "qemu/bitops.h"
 
 /* QEMU sends frames smaller than 60 bytes to ethernet nics.
  * Such frames are rejected by real nics and their emulations.
@@ -105,7 +106,6 @@
 #define PCI_IO_SIZE             64
 #define PCI_FLASH_SIZE          (128 * KiB)
 
-#define BIT(n) (1 << (n))
 #define BITS(n, m) (((0xffffffffU << (31 - n)) >> (31 - n + m)) << m)
 
 /* The SCB accepts the following controls for the Tx and Rx units: */
@@ -1876,15 +1876,15 @@ static int e100_nic_init(PCIDevice *pci_dev)
     s->eeprom = eeprom93xx_new(&pci_dev->qdev, EEPROM_SIZE);
 
     /* Handler for memory-mapped I/O */
-    memory_region_init_io(&s->mmio_bar, &eepro100_ops, s, "eepro100-mmio",
-                          PCI_MEM_SIZE);
+    memory_region_init_io(&s->mmio_bar, OBJECT(s), &eepro100_ops, s,
+                          "eepro100-mmio", PCI_MEM_SIZE);
     pci_register_bar(&s->dev, 0, PCI_BASE_ADDRESS_MEM_PREFETCH, &s->mmio_bar);
-    memory_region_init_io(&s->io_bar, &eepro100_ops, s, "eepro100-io",
-                          PCI_IO_SIZE);
+    memory_region_init_io(&s->io_bar, OBJECT(s), &eepro100_ops, s,
+                          "eepro100-io", PCI_IO_SIZE);
     pci_register_bar(&s->dev, 1, PCI_BASE_ADDRESS_SPACE_IO, &s->io_bar);
     /* FIXME: flash aliases to mmio?! */
-    memory_region_init_io(&s->flash_bar, &eepro100_ops, s, "eepro100-flash",
-                          PCI_FLASH_SIZE);
+    memory_region_init_io(&s->flash_bar, OBJECT(s), &eepro100_ops, s,
+                          "eepro100-flash", PCI_FLASH_SIZE);
     pci_register_bar(&s->dev, 2, 0, &s->flash_bar);
 
     qemu_macaddr_default_if_unset(&s->conf.macaddr);
@@ -2083,6 +2083,7 @@ static void eepro100_class_init(ObjectClass *klass, void *data)
 
     info = eepro100_get_class_by_name(object_class_get_name(klass));
 
+    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
     dc->props = e100_properties;
     dc->desc = info->desc;
     k->vendor_id = PCI_VENDOR_ID_INTEL;

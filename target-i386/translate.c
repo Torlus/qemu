@@ -4677,8 +4677,6 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
     }
     s->pc = pc_start;
     prefixes = 0;
-    aflag = s->code32;
-    dflag = s->code32;
     s->override = -1;
     rex_w = -1;
     rex_r = 0;
@@ -4801,23 +4799,25 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
     }
 
     /* Post-process prefixes.  */
-    if (prefixes & PREFIX_DATA) {
-        dflag ^= 1;
-    }
-    if (prefixes & PREFIX_ADR) {
-        aflag ^= 1;
-    }
-#ifdef TARGET_X86_64
     if (CODE64(s)) {
-        if (rex_w == 1) {
-            /* 0x66 is ignored if rex.w is set */
-            dflag = 2;
+        /* In 64-bit mode, the default data size is 32-bit.  Select 64-bit
+           data with rex_w, and 16-bit data with 0x66; rex_w takes precedence
+           over 0x66 if both are present.  */
+        dflag = (rex_w > 0 ? 2 : prefixes & PREFIX_DATA ? 0 : 1);
+        /* In 64-bit mode, 0x67 selects 32-bit addressing.  */
+        aflag = (prefixes & PREFIX_ADR ? 1 : 2);
+    } else {
+        /* In 16/32-bit mode, 0x66 selects the opposite data size.  */
+        dflag = s->code32;
+        if (prefixes & PREFIX_DATA) {
+            dflag ^= 1;
         }
-        if (!(prefixes & PREFIX_ADR)) {
-            aflag = 2;
+        /* In 16/32-bit mode, 0x67 selects the opposite addressing.  */
+        aflag = s->code32;
+        if (prefixes & PREFIX_ADR) {
+            aflag ^= 1;
         }
     }
-#endif
 
     s->prefix = prefixes;
     s->aflag = aflag;
@@ -8251,10 +8251,12 @@ void optimize_flags_init(void)
 /* generate intermediate code in gen_opc_buf and gen_opparam_buf for
    basic block 'tb'. If search_pc is TRUE, also generate PC
    information for each intermediate instruction. */
-static inline void gen_intermediate_code_internal(CPUX86State *env,
+static inline void gen_intermediate_code_internal(X86CPU *cpu,
                                                   TranslationBlock *tb,
-                                                  int search_pc)
+                                                  bool search_pc)
 {
+    CPUState *cs = CPU(cpu);
+    CPUX86State *env = &cpu->env;
     DisasContext dc1, *dc = &dc1;
     target_ulong pc_ptr;
     uint16_t *gen_opc_end;
@@ -8280,7 +8282,7 @@ static inline void gen_intermediate_code_internal(CPUX86State *env,
     dc->cpl = (flags >> HF_CPL_SHIFT) & 3;
     dc->iopl = (flags >> IOPL_SHIFT) & 3;
     dc->tf = (flags >> TF_SHIFT) & 1;
-    dc->singlestep_enabled = env->singlestep_enabled;
+    dc->singlestep_enabled = cs->singlestep_enabled;
     dc->cc_op = CC_OP_DYNAMIC;
     dc->cc_op_dirty = false;
     dc->cs_base = cs_base;
@@ -8301,7 +8303,7 @@ static inline void gen_intermediate_code_internal(CPUX86State *env,
     dc->code64 = (flags >> HF_CS64_SHIFT) & 1;
 #endif
     dc->flags = flags;
-    dc->jmp_opt = !(dc->tf || env->singlestep_enabled ||
+    dc->jmp_opt = !(dc->tf || cs->singlestep_enabled ||
                     (flags & HF_INHIBIT_IRQ_MASK)
 #ifndef CONFIG_SOFTMMU
                     || (flags & HF_SOFTMMU_MASK)
@@ -8428,12 +8430,12 @@ static inline void gen_intermediate_code_internal(CPUX86State *env,
 
 void gen_intermediate_code(CPUX86State *env, TranslationBlock *tb)
 {
-    gen_intermediate_code_internal(env, tb, 0);
+    gen_intermediate_code_internal(x86_env_get_cpu(env), tb, false);
 }
 
 void gen_intermediate_code_pc(CPUX86State *env, TranslationBlock *tb)
 {
-    gen_intermediate_code_internal(env, tb, 1);
+    gen_intermediate_code_internal(x86_env_get_cpu(env), tb, true);
 }
 
 void restore_state_to_opc(CPUX86State *env, TranslationBlock *tb, int pc_pos)

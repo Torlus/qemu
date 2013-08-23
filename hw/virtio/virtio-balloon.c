@@ -53,8 +53,8 @@ static const char *balloon_stat_names[] = {
 /*
  * reset_stats - Mark all items in the stats array as unset
  *
- * This function needs to be called at device intialization and before
- * before updating to a set of newly-generated stats.  This will ensure that no
+ * This function needs to be called at device initialization and before
+ * updating to a set of newly-generated stats.  This will ensure that no
  * stale values stick around in case the guest reports a subset of the supported
  * statistics.
  */
@@ -197,7 +197,7 @@ static void virtio_balloon_handle_output(VirtIODevice *vdev, VirtQueue *vq)
 
             /* FIXME: remove get_system_memory(), but how? */
             section = memory_region_find(get_system_memory(), pa, 1);
-            if (!section.size || !memory_region_is_ram(section.mr))
+            if (!int128_nz(section.size) || !memory_region_is_ram(section.mr))
                 continue;
 
             /* Using memory_region_get_ram_ptr is bending the rules a bit, but
@@ -205,6 +205,7 @@ static void virtio_balloon_handle_output(VirtIODevice *vdev, VirtQueue *vq)
             addr = section.offset_within_region;
             balloon_page(memory_region_get_ram_ptr(section.mr) + addr,
                          !!(vq == s->dvq));
+            memory_region_unref(section.mr);
         }
 
         virtqueue_push(vq, &elem, offset);
@@ -391,6 +392,7 @@ static void virtio_balloon_class_init(ObjectClass *klass, void *data)
     VirtioDeviceClass *vdc = VIRTIO_DEVICE_CLASS(klass);
     dc->exit = virtio_balloon_device_exit;
     dc->props = virtio_balloon_properties;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
     vdc->init = virtio_balloon_device_init;
     vdc->get_config = virtio_balloon_get_config;
     vdc->set_config = virtio_balloon_set_config;

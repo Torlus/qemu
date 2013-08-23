@@ -9,6 +9,9 @@
 
 // #define LOG_REG_ACCESS
 
+#define TYPE_BCM2835_MPHI "bcm2835_mphi"
+#define BCM2835_MPHI(obj) OBJECT_CHECK(bcm2835_mphi_state, (obj), TYPE_BCM2835_MPHI)
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -140,22 +143,24 @@ static const VMStateDescription vmstate_bcm2835_mphi = {
     }
 };
 
-static int bcm2835_mphi_init(SysBusDevice *dev)
+static int bcm2835_mphi_init(SysBusDevice *sbd)
 {
-    bcm2835_mphi_state *s = FROM_SYSBUS(bcm2835_mphi_state, dev);
-    
+    // bcm2835_mphi_state *s = FROM_SYSBUS(bcm2835_mphi_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_mphi_state *s = BCM2835_MPHI(dev);
+
     s->mphi_base = 0;
     s->mphi_ctrl = 0;
     s->mphi_outdda = 0;
     s->mphi_outddb = 0;
     s->mphi_intstat = 0;
     
-    memory_region_init_io(&s->iomem, &bcm2835_mphi_ops, s, 
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_mphi_ops, s, 
         "bcm2835_mphi", 0x1000);
-    sysbus_init_mmio(dev, &s->iomem);    
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_mphi, s);
+    sysbus_init_mmio(sbd, &s->iomem);    
+    vmstate_register(dev, -1, &vmstate_bcm2835_mphi, s);
 
-    sysbus_init_irq(dev, &s->irq);
+    sysbus_init_irq(sbd, &s->irq);
 
     return 0;
 }

@@ -16,6 +16,7 @@
 #include <sys/ioctl.h>
 #include "hw/virtio/vhost.h"
 #include "hw/hw.h"
+#include "qemu/atomic.h"
 #include "qemu/range.h"
 #include <linux/vhost.h>
 #include "exec/address-spaces.h"
@@ -47,11 +48,9 @@ static void vhost_dev_sync_region(struct vhost_dev *dev,
             addr += VHOST_LOG_CHUNK;
             continue;
         }
-        /* Data must be read atomically. We don't really
-         * need the barrier semantics of __sync
-         * builtins, but it's easier to use them than
-         * roll our own. */
-        log = __sync_fetch_and_and(from, 0);
+        /* Data must be read atomically. We don't really need barrier semantics
+         * but it's easier to use atomic_* than roll our own. */
+        log = atomic_xchg(from, 0);
         while ((bit = sizeof(log) > sizeof(int) ?
                 ffsll(log) : ffs(log))) {
             hwaddr page_addr;
@@ -81,7 +80,7 @@ static int vhost_sync_dirty_bitmap(struct vhost_dev *dev,
         return 0;
     }
     start_addr = section->offset_within_address_space;
-    end_addr = range_get_last(start_addr, section->size);
+    end_addr = range_get_last(start_addr, int128_get64(section->size));
     start_addr = MAX(first, start_addr);
     end_addr = MIN(last, end_addr);
 
@@ -379,7 +378,7 @@ static void vhost_set_memory(MemoryListener *listener,
     struct vhost_dev *dev = container_of(listener, struct vhost_dev,
                                          memory_listener);
     hwaddr start_addr = section->offset_within_address_space;
-    ram_addr_t size = section->size;
+    ram_addr_t size = int128_get64(section->size);
     bool log_dirty = memory_region_is_logging(section->mr);
     int s = offsetof(struct vhost_memory, regions) +
         (dev->mem->nregions + 1) * sizeof dev->mem->regions[0];
@@ -497,6 +496,7 @@ static void vhost_region_add(MemoryListener *listener,
     dev->mem_sections = g_renew(MemoryRegionSection, dev->mem_sections,
                                 dev->n_mem_sections);
     dev->mem_sections[dev->n_mem_sections - 1] = *section;
+    memory_region_ref(section->mr);
     vhost_set_memory(listener, section, true);
 }
 
@@ -512,6 +512,7 @@ static void vhost_region_del(MemoryListener *listener,
     }
 
     vhost_set_memory(listener, section, false);
+    memory_region_unref(section->mr);
     for (i = 0; i < dev->n_mem_sections; ++i) {
         if (dev->mem_sections[i].offset_within_address_space
             == section->offset_within_address_space) {
@@ -761,6 +762,7 @@ static void vhost_virtqueue_stop(struct vhost_dev *dev,
         fflush(stderr);
     }
     virtio_queue_set_last_avail_idx(vdev, idx, state.num);
+    virtio_queue_invalidate_signalled_used(vdev, idx);
     assert (r >= 0);
     cpu_physical_memory_unmap(vq->ring, virtio_queue_get_ring_size(vdev, idx),
                               0, virtio_queue_get_ring_size(vdev, idx));

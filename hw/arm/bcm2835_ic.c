@@ -20,7 +20,11 @@
 #define IR_1 0
 #define IR_2 1
 
-typedef struct {
+#define TYPE_BCM2835_IC "bcm2835_ic"
+#define BCM2835_IC(obj) OBJECT_CHECK(bcm2835_ic_state, (obj), TYPE_BCM2835_IC)
+
+
+typedef struct bcm2835_ic_state {
     SysBusDevice busdev;
     MemoryRegion iomem;
     
@@ -181,7 +185,8 @@ static const MemoryRegionOps bcm2835_ic_ops = {
 
 static void bcm2835_ic_reset(DeviceState *d)
 {
-    bcm2835_ic_state *s = DO_UPCAST(bcm2835_ic_state, busdev.qdev, d);
+    // bcm2835_ic_state *s = DO_UPCAST(bcm2835_ic_state, busdev.qdev, d);
+    bcm2835_ic_state *s = BCM2835_IC(d);
     int i;
 
     for (i = 0; i < 3; i++) {
@@ -191,16 +196,22 @@ static void bcm2835_ic_reset(DeviceState *d)
     s->fiq_select = 0;
 }
 
-static int bcm2835_ic_init(SysBusDevice *dev)
+static int bcm2835_ic_init(SysBusDevice *sbd)
 {
-    bcm2835_ic_state *s = FROM_SYSBUS(bcm2835_ic_state, dev);
+    // bcm2835_ic_state *s = FROM_SYSBUS(bcm2835_ic_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_ic_state *s = BCM2835_IC(dev);
 
-    memory_region_init_io(&s->iomem, &bcm2835_ic_ops, s, "bcm2835_ic", 0x200);
-    sysbus_init_mmio(dev, &s->iomem);
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_ic_ops, s, "bcm2835_ic", 0x200);
+    // sysbus_init_mmio(dev, &s->iomem);
+    sysbus_init_mmio(sbd, &s->iomem);
 
-    qdev_init_gpio_in(&dev->qdev, bcm2835_ic_set_irq, 72);
-    sysbus_init_irq(dev, &s->irq);
-    sysbus_init_irq(dev, &s->fiq);
+    // qdev_init_gpio_in(&dev->qdev, bcm2835_ic_set_irq, 72);
+    qdev_init_gpio_in(dev, bcm2835_ic_set_irq, 72);
+    // sysbus_init_irq(dev, &s->irq);
+    // sysbus_init_irq(dev, &s->fiq);
+    sysbus_init_irq(sbd, &s->irq);
+    sysbus_init_irq(sbd, &s->fiq);
     return 0;
 }
 

@@ -55,7 +55,6 @@
 #else
 #include "exec/address-spaces.h"
 #endif
-#include "qemu/timer.h"
 
 #include "exec/cputlb.h"
 #include "translate-all.h"
@@ -461,6 +460,8 @@ static inline PageDesc *page_find(tb_page_addr_t index)
 # define MAX_CODE_GEN_BUFFER_SIZE  (2ul * 1024 * 1024 * 1024)
 #elif defined(__sparc__)
 # define MAX_CODE_GEN_BUFFER_SIZE  (2ul * 1024 * 1024 * 1024)
+#elif defined(__aarch64__)
+# define MAX_CODE_GEN_BUFFER_SIZE  (128ul * 1024 * 1024)
 #elif defined(__arm__)
 # define MAX_CODE_GEN_BUFFER_SIZE  (16u * 1024 * 1024)
 #elif defined(__s390x__)
@@ -680,7 +681,7 @@ static void page_flush_tb(void)
 /* XXX: tb_flush is currently not thread safe */
 void tb_flush(CPUArchState *env1)
 {
-    CPUArchState *env;
+    CPUState *cpu;
 
 #if defined(DEBUG_FLUSH)
     printf("qemu: flush code_size=%ld nb_tbs=%d avg_tb_size=%ld\n",
@@ -695,7 +696,9 @@ void tb_flush(CPUArchState *env1)
     }
     tcg_ctx.tb_ctx.nb_tbs = 0;
 
-    for (env = first_cpu; env != NULL; env = env->next_cpu) {
+    for (cpu = first_cpu; cpu != NULL; cpu = cpu->next_cpu) {
+        CPUArchState *env = cpu->env_ptr;
+
         memset(env->tb_jmp_cache, 0, TB_JMP_CACHE_SIZE * sizeof(void *));
     }
 
@@ -820,7 +823,7 @@ static inline void tb_reset_jump(TranslationBlock *tb, int n)
 /* invalidate one TB */
 void tb_phys_invalidate(TranslationBlock *tb, tb_page_addr_t page_addr)
 {
-    CPUArchState *env;
+    CPUState *cpu;
     PageDesc *p;
     unsigned int h, n1;
     tb_page_addr_t phys_pc;
@@ -847,7 +850,9 @@ void tb_phys_invalidate(TranslationBlock *tb, tb_page_addr_t page_addr)
 
     /* remove the TB from the hash list */
     h = tb_jmp_cache_hash_func(tb->pc);
-    for (env = first_cpu; env != NULL; env = env->next_cpu) {
+    for (cpu = first_cpu; cpu != NULL; cpu = cpu->next_cpu) {
+        CPUArchState *env = cpu->env_ptr;
+
         if (env->tb_jmp_cache[h] == tb) {
             env->tb_jmp_cache[h] = NULL;
         }
@@ -998,8 +1003,10 @@ void tb_invalidate_phys_page_range(tb_page_addr_t start, tb_page_addr_t end,
                                    int is_cpu_write_access)
 {
     TranslationBlock *tb, *tb_next, *saved_tb;
-    CPUArchState *env = cpu_single_env;
-    CPUState *cpu = NULL;
+    CPUState *cpu = current_cpu;
+#if defined(TARGET_HAS_PRECISE_SMC) || !defined(CONFIG_USER_ONLY)
+    CPUArchState *env = NULL;
+#endif
     tb_page_addr_t tb_start, tb_end;
     PageDesc *p;
     int n;
@@ -1022,9 +1029,11 @@ void tb_invalidate_phys_page_range(tb_page_addr_t start, tb_page_addr_t end,
         /* build code bitmap */
         build_page_bitmap(p);
     }
-    if (env != NULL) {
-        cpu = ENV_GET_CPU(env);
+#if defined(TARGET_HAS_PRECISE_SMC) || !defined(CONFIG_USER_ONLY)
+    if (cpu != NULL) {
+        env = cpu->env_ptr;
     }
+#endif
 
     /* we remove all the TBs in the range [start, end[ */
     /* XXX: see if in some cases it could be faster to invalidate all
@@ -1139,15 +1148,16 @@ void tb_invalidate_phys_page_fast(tb_page_addr_t start, int len)
 
 #if !defined(CONFIG_SOFTMMU)
 static void tb_invalidate_phys_page(tb_page_addr_t addr,
-                                    uintptr_t pc, void *puc)
+                                    uintptr_t pc, void *puc,
+                                    bool locked)
 {
     TranslationBlock *tb;
     PageDesc *p;
     int n;
 #ifdef TARGET_HAS_PRECISE_SMC
     TranslationBlock *current_tb = NULL;
-    CPUArchState *env = cpu_single_env;
-    CPUState *cpu = NULL;
+    CPUState *cpu = current_cpu;
+    CPUArchState *env = NULL;
     int current_tb_modified = 0;
     target_ulong current_pc = 0;
     target_ulong current_cs_base = 0;
@@ -1164,8 +1174,8 @@ static void tb_invalidate_phys_page(tb_page_addr_t addr,
     if (tb && pc != 0) {
         current_tb = tb_find_pc(pc);
     }
-    if (env != NULL) {
-        cpu = ENV_GET_CPU(env);
+    if (cpu != NULL) {
+        env = cpu->env_ptr;
     }
 #endif
     while (tb != NULL) {
@@ -1197,6 +1207,9 @@ static void tb_invalidate_phys_page(tb_page_addr_t addr,
            itself */
         cpu->current_tb = NULL;
         tb_gen_code(env, current_pc, current_cs_base, current_flags, 1);
+        if (locked) {
+            mmap_unlock();
+        }
         cpu_resume_from_signal(env, puc);
     }
 #endif
@@ -1354,16 +1367,16 @@ static TranslationBlock *tb_find_pc(uintptr_t tc_ptr)
 void tb_invalidate_phys_addr(hwaddr addr)
 {
     ram_addr_t ram_addr;
-    MemoryRegionSection *section;
+    MemoryRegion *mr;
+    hwaddr l = 1;
 
-    section = phys_page_find(address_space_memory.dispatch,
-                             addr >> TARGET_PAGE_BITS);
-    if (!(memory_region_is_ram(section->mr)
-          || (section->mr->rom_device && section->mr->readable))) {
+    mr = address_space_translate(&address_space_memory, addr, &addr, &l, false);
+    if (!(memory_region_is_ram(mr)
+          || memory_region_is_romd(mr))) {
         return;
     }
-    ram_addr = (memory_region_get_ram_addr(section->mr) & TARGET_PAGE_MASK)
-        + memory_region_section_addr(section, addr);
+    ram_addr = (memory_region_get_ram_addr(mr) & TARGET_PAGE_MASK)
+        + addr;
     tb_invalidate_phys_page_range(ram_addr, ram_addr + 1, 0);
 }
 #endif /* TARGET_HAS_ICE && !defined(CONFIG_USER_ONLY) */
@@ -1714,7 +1727,7 @@ void page_set_flags(target_ulong start, target_ulong end, int flags)
         if (!(p->flags & PAGE_WRITE) &&
             (flags & PAGE_WRITE) &&
             p->first_tb) {
-            tb_invalidate_phys_page(addr, 0, NULL);
+            tb_invalidate_phys_page(addr, 0, NULL, false);
         }
         p->flags = flags;
     }
@@ -1809,7 +1822,7 @@ int page_unprotect(target_ulong address, uintptr_t pc, void *puc)
 
             /* and since the content will be modified, we must invalidate
                the corresponding translated code. */
-            tb_invalidate_phys_page(addr, pc, puc);
+            tb_invalidate_phys_page(addr, pc, puc, true);
 #ifdef DEBUG_TB_CHECK
             tb_invalidate_check(addr);
 #endif

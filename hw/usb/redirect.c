@@ -1334,6 +1334,7 @@ static void usbredir_handle_destroy(USBDevice *udev)
     USBRedirDevice *dev = DO_UPCAST(USBRedirDevice, dev, udev);
 
     qemu_chr_delete(dev->cs);
+    dev->cs = NULL;
     /* Note must be done after qemu_chr_close, as that causes a close event */
     qemu_bh_delete(dev->chardev_close_bh);
 
@@ -2362,6 +2363,7 @@ static void usbredir_class_initfn(ObjectClass *klass, void *data)
     uc->ep_stopped     = usbredir_ep_stopped;
     dc->vmsd           = &usbredir_vmstate;
     dc->props          = usbredir_properties;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }
 
 static const TypeInfo usbredir_dev_info = {

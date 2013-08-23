@@ -25,15 +25,19 @@
 
 /* Primary interrupt controller.  */
 
-typedef struct vpb_sic_state
-{
-  SysBusDevice busdev;
-  MemoryRegion iomem;
-  uint32_t level;
-  uint32_t mask;
-  uint32_t pic_enable;
-  qemu_irq parent[32];
-  int irq;
+#define TYPE_VERSATILE_PB_SIC "versatilepb_sic"
+#define VERSATILE_PB_SIC(obj) \
+    OBJECT_CHECK(vpb_sic_state, (obj), TYPE_VERSATILE_PB_SIC)
+
+typedef struct vpb_sic_state {
+    SysBusDevice parent_obj;
+
+    MemoryRegion iomem;
+    uint32_t level;
+    uint32_t mask;
+    uint32_t pic_enable;
+    qemu_irq parent[32];
+    int irq;
 } vpb_sic_state;
 
 static const VMStateDescription vmstate_vpb_sic = {
@@ -144,18 +148,20 @@ static const MemoryRegionOps vpb_sic_ops = {
     .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-static int vpb_sic_init(SysBusDevice *dev)
+static int vpb_sic_init(SysBusDevice *sbd)
 {
-    vpb_sic_state *s = FROM_SYSBUS(vpb_sic_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    vpb_sic_state *s = VERSATILE_PB_SIC(dev);
     int i;
 
-    qdev_init_gpio_in(&dev->qdev, vpb_sic_set_irq, 32);
+    qdev_init_gpio_in(dev, vpb_sic_set_irq, 32);
     for (i = 0; i < 32; i++) {
-        sysbus_init_irq(dev, &s->parent[i]);
+        sysbus_init_irq(sbd, &s->parent[i]);
     }
     s->irq = 31;
-    memory_region_init_io(&s->iomem, &vpb_sic_ops, s, "vpb-sic", 0x1000);
-    sysbus_init_mmio(dev, &s->iomem);
+    memory_region_init_io(&s->iomem, OBJECT(s), &vpb_sic_ops, s,
+                          "vpb-sic", 0x1000);
+    sysbus_init_mmio(sbd, &s->iomem);
     return 0;
 }
 
@@ -172,7 +178,6 @@ static void versatile_init(QEMUMachineInitArgs *args, int board_id)
     ARMCPU *cpu;
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *ram = g_new(MemoryRegion, 1);
-    qemu_irq *cpu_pic;
     qemu_irq pic[32];
     qemu_irq sic[32];
     DeviceState *dev, *sysctl;
@@ -193,7 +198,7 @@ static void versatile_init(QEMUMachineInitArgs *args, int board_id)
         fprintf(stderr, "Unable to find CPU definition\n");
         exit(1);
     }
-    memory_region_init_ram(ram, "versatile.ram", args->ram_size);
+    memory_region_init_ram(ram, NULL, "versatile.ram", args->ram_size);
     vmstate_register_ram_global(ram);
     /* ??? RAM should repeat to fill physical memory space.  */
     /* SDRAM at address zero.  */
@@ -205,14 +210,14 @@ static void versatile_init(QEMUMachineInitArgs *args, int board_id)
     qdev_init_nofail(sysctl);
     sysbus_mmio_map(SYS_BUS_DEVICE(sysctl), 0, 0x10000000);
 
-    cpu_pic = arm_pic_init_cpu(cpu);
     dev = sysbus_create_varargs("pl190", 0x10140000,
-                                cpu_pic[ARM_PIC_CPU_IRQ],
-                                cpu_pic[ARM_PIC_CPU_FIQ], NULL);
+                                qdev_get_gpio_in(DEVICE(cpu), ARM_CPU_IRQ),
+                                qdev_get_gpio_in(DEVICE(cpu), ARM_CPU_FIQ),
+                                NULL);
     for (n = 0; n < 32; n++) {
         pic[n] = qdev_get_gpio_in(dev, n);
     }
-    dev = sysbus_create_simple("versatilepb_sic", 0x10003000, NULL);
+    dev = sysbus_create_simple(TYPE_VERSATILE_PB_SIC, 0x10003000, NULL);
     for (n = 0; n < 32; n++) {
         sysbus_connect_irq(SYS_BUS_DEVICE(dev), n, pic[n]);
         sic[n] = qdev_get_gpio_in(dev, n);
@@ -244,7 +249,7 @@ static void versatile_init(QEMUMachineInitArgs *args, int board_id)
             smc91c111_init(nd, 0x10010000, sic[25]);
             done_smc = 1;
         } else {
-            pci_nic_init_nofail(nd, "rtl8139", NULL);
+            pci_nic_init_nofail(nd, pci_bus, "rtl8139", NULL);
         }
     }
     if (usb_enabled(false)) {
@@ -392,7 +397,7 @@ static void vpb_sic_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo vpb_sic_info = {
-    .name          = "versatilepb_sic",
+    .name          = TYPE_VERSATILE_PB_SIC,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(vpb_sic_state),
     .class_init    = vpb_sic_class_init,

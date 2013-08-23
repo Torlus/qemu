@@ -23,7 +23,16 @@
 #if !defined(CONFIG_USER_ONLY)
 #include "hw/loader.h"
 #endif
+#include "hw/arm/arm.h"
 #include "sysemu/sysemu.h"
+#include "sysemu/kvm.h"
+
+static void arm_cpu_set_pc(CPUState *cs, vaddr value)
+{
+    ARMCPU *cpu = ARM_CPU(cs);
+
+    cpu->env.regs[15] = value;
+}
 
 static void cp_reg_reset(gpointer key, gpointer value, gpointer opaque)
 {
@@ -62,11 +71,6 @@ static void arm_cpu_reset(CPUState *s)
     ARMCPU *cpu = ARM_CPU(s);
     ARMCPUClass *acc = ARM_CPU_GET_CLASS(cpu);
     CPUARMState *env = &cpu->env;
-
-    if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-        qemu_log("CPU Reset (CPU %d)\n", s->cpu_index);
-        log_cpu_state(env, 0);
-    }
 
     acc->parent_reset(s);
 
@@ -127,6 +131,55 @@ static void arm_cpu_reset(CPUState *s)
     tb_flush(env);
 }
 
+#ifndef CONFIG_USER_ONLY
+static void arm_cpu_set_irq(void *opaque, int irq, int level)
+{
+    ARMCPU *cpu = opaque;
+    CPUState *cs = CPU(cpu);
+
+    switch (irq) {
+    case ARM_CPU_IRQ:
+        if (level) {
+            cpu_interrupt(cs, CPU_INTERRUPT_HARD);
+        } else {
+            cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
+        }
+        break;
+    case ARM_CPU_FIQ:
+        if (level) {
+            cpu_interrupt(cs, CPU_INTERRUPT_FIQ);
+        } else {
+            cpu_reset_interrupt(cs, CPU_INTERRUPT_FIQ);
+        }
+        break;
+    default:
+        hw_error("arm_cpu_set_irq: Bad interrupt line %d\n", irq);
+    }
+}
+
+static void arm_cpu_kvm_set_irq(void *opaque, int irq, int level)
+{
+#ifdef CONFIG_KVM
+    ARMCPU *cpu = opaque;
+    CPUState *cs = CPU(cpu);
+    int kvm_irq = KVM_ARM_IRQ_TYPE_CPU << KVM_ARM_IRQ_TYPE_SHIFT;
+
+    switch (irq) {
+    case ARM_CPU_IRQ:
+        kvm_irq |= KVM_ARM_IRQ_CPU_IRQ;
+        break;
+    case ARM_CPU_FIQ:
+        kvm_irq |= KVM_ARM_IRQ_CPU_FIQ;
+        break;
+    default:
+        hw_error("arm_cpu_kvm_set_irq: Bad interrupt line %d\n", irq);
+    }
+    kvm_irq |= cs->cpu_index << KVM_ARM_IRQ_VCPU_SHIFT;
+    kvm_set_irq(kvm_state, kvm_irq, level ? 1 : 0);
+#endif
+}
+#endif
+
 static inline void set_feature(CPUARMState *env, int feature)
 {
     env->features |= 1ULL << feature;
@@ -143,6 +196,22 @@ static void arm_cpu_initfn(Object *obj)
     cpu->cp_regs = g_hash_table_new_full(g_int_hash, g_int_equal,
                                          g_free, g_free);
 
+#ifndef CONFIG_USER_ONLY
+    /* Our inbound IRQ and FIQ lines */
+    if (kvm_enabled()) {
+        qdev_init_gpio_in(DEVICE(cpu), arm_cpu_kvm_set_irq, 2);
+    } else {
+        qdev_init_gpio_in(DEVICE(cpu), arm_cpu_set_irq, 2);
+    }
+
+    cpu->gt_timer[GTIMER_PHYS] = qemu_new_timer(vm_clock, GTIMER_SCALE,
+                                                arm_gt_ptimer_cb, cpu);
+    cpu->gt_timer[GTIMER_VIRT] = qemu_new_timer(vm_clock, GTIMER_SCALE,
+                                                arm_gt_vtimer_cb, cpu);
+    qdev_init_gpio_out(DEVICE(cpu), cpu->gt_timer_outputs,
+                       ARRAY_SIZE(cpu->gt_timer_outputs));
+#endif
+
     if (tcg_enabled() && !inited) {
         inited = true;
         arm_translate_init();
@@ -157,11 +226,17 @@ static void arm_cpu_finalizefn(Object *obj)
 
 static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
 {
+    CPUState *cs = CPU(dev);
     ARMCPU *cpu = ARM_CPU(dev);
     ARMCPUClass *acc = ARM_CPU_GET_CLASS(dev);
     CPUARMState *env = &cpu->env;
 
     /* Some features automatically imply others: */
+    if (arm_feature(env, ARM_FEATURE_V8)) {
+        set_feature(env, ARM_FEATURE_V7);
+        set_feature(env, ARM_FEATURE_ARM_DIV);
+        set_feature(env, ARM_FEATURE_LPAE);
+    }
     if (arm_feature(env, ARM_FEATURE_V7)) {
         set_feature(env, ARM_FEATURE_VAPA);
         set_feature(env, ARM_FEATURE_THUMB2);
@@ -198,14 +273,17 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
         set_feature(env, ARM_FEATURE_VFP);
     }
     if (arm_feature(env, ARM_FEATURE_LPAE)) {
+        set_feature(env, ARM_FEATURE_V7MP);
         set_feature(env, ARM_FEATURE_PXN);
     }
 
     register_cp_regs_for_features(cpu);
     arm_cpu_register_gdb_regs_for_features(cpu);
 
-    cpu_reset(CPU(cpu));
-    qemu_init_vcpu(env);
+    init_cpreg_list(cpu);
+
+    cpu_reset(cs);
+    qemu_init_vcpu(cs);
 
     acc->parent_realize(dev, errp);
 }
@@ -572,7 +650,6 @@ static void cortex_a15_initfn(Object *obj)
     set_feature(&cpu->env, ARM_FEATURE_NEON);
     set_feature(&cpu->env, ARM_FEATURE_THUMB2EE);
     set_feature(&cpu->env, ARM_FEATURE_ARM_DIV);
-    set_feature(&cpu->env, ARM_FEATURE_V7MP);
     set_feature(&cpu->env, ARM_FEATURE_GENERIC_TIMER);
     set_feature(&cpu->env, ARM_FEATURE_DUMMY_C15_REGS);
     set_feature(&cpu->env, ARM_FEATURE_LPAE);
@@ -749,7 +826,7 @@ static void pxa270c5_initfn(Object *obj)
 static void arm_any_initfn(Object *obj)
 {
     ARMCPU *cpu = ARM_CPU(obj);
-    set_feature(&cpu->env, ARM_FEATURE_V7);
+    set_feature(&cpu->env, ARM_FEATURE_V8);
     set_feature(&cpu->env, ARM_FEATURE_VFP4);
     set_feature(&cpu->env, ARM_FEATURE_VFP_FP16);
     set_feature(&cpu->env, ARM_FEATURE_NEON);
@@ -815,7 +892,16 @@ static void arm_cpu_class_init(ObjectClass *oc, void *data)
 
     cc->class_by_name = arm_cpu_class_by_name;
     cc->do_interrupt = arm_cpu_do_interrupt;
-    cpu_class_set_vmsd(cc, &vmstate_arm_cpu);
+    cc->dump_state = arm_cpu_dump_state;
+    cc->set_pc = arm_cpu_set_pc;
+    cc->gdb_read_register = arm_cpu_gdb_read_register;
+    cc->gdb_write_register = arm_cpu_gdb_write_register;
+#ifndef CONFIG_USER_ONLY
+    cc->get_phys_page_debug = arm_cpu_get_phys_page_debug;
+    cc->vmsd = &vmstate_arm_cpu;
+#endif
+    cc->gdb_num_core_regs = 26;
+    cc->gdb_core_xml_file = "arm-core.xml";
 }
 
 static void cpu_register(const ARMCPUInfo *info)

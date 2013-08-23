@@ -22,6 +22,8 @@
 #define CTRL_FRC_PS_MASK (0xff << 16)
 #define CTRL_FRC_PS_SHIFT 16
 
+#define TYPE_BCM2835_TIMER "bcm2835_timer"
+#define BCM2835_TIMER(obj) OBJECT_CHECK(bcm2835_timer_state, (obj), TYPE_BCM2835_TIMER)
 
 typedef struct {
     SysBusDevice busdev;
@@ -203,12 +205,14 @@ static const VMStateDescription vmstate_bcm2835_timer = {
     }
 };
 
-static int bcm2835_timer_init(SysBusDevice *dev)
+static int bcm2835_timer_init(SysBusDevice *sbd)
 {
     QEMUBH *bh;
 
-    bcm2835_timer_state *s = FROM_SYSBUS(bcm2835_timer_state, dev);
-    
+    // bcm2835_timer_state *s = FROM_SYSBUS(bcm2835_timer_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_timer_state *s = BCM2835_TIMER(dev);
+
     s->load = 0;
     s->control = 0x3e << 16;
     s->raw_irq = 0;
@@ -220,12 +224,12 @@ static int bcm2835_timer_init(SysBusDevice *dev)
     bh = qemu_bh_new(frc_timer_tick, s);
     s->frc_timer = ptimer_init(bh);
     
-    memory_region_init_io(&s->iomem, &bcm2835_timer_ops, s, 
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_timer_ops, s, 
         "bcm2835_timer", 0x100);
-    sysbus_init_mmio(dev, &s->iomem);    
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_timer, s);
+    sysbus_init_mmio(sbd, &s->iomem);    
+    vmstate_register(dev, -1, &vmstate_bcm2835_timer, s);
 
-    sysbus_init_irq(dev, &s->irq);
+    sysbus_init_irq(sbd, &s->irq);
 
     return 0;
 }

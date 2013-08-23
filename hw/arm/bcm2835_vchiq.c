@@ -9,6 +9,9 @@
 
 #include "bcm2835_common.h"
 
+#define TYPE_BCM2835_VCHIQ "bcm2835_vchiq"
+#define BCM2835_VCHIQ(obj) OBJECT_CHECK(bcm2835_vchiq_state, (obj), TYPE_BCM2835_VCHIQ)
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -73,17 +76,19 @@ static const VMStateDescription vmstate_bcm2835_vchiq = {
     }
 };
 
-static int bcm2835_vchiq_init(SysBusDevice *dev)
+static int bcm2835_vchiq_init(SysBusDevice *sbd)
 {
-    bcm2835_vchiq_state *s = FROM_SYSBUS(bcm2835_vchiq_state, dev);
-    
+    // bcm2835_vchiq_state *s = FROM_SYSBUS(bcm2835_vchiq_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_vchiq_state *s = BCM2835_VCHIQ(dev);
+
     s->pending = 0;
     
-    sysbus_init_irq(dev, &s->mbox_irq);
-    memory_region_init_io(&s->iomem, &bcm2835_vchiq_ops, s, 
+    sysbus_init_irq(sbd, &s->mbox_irq);
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_vchiq_ops, s, 
         "bcm2835_vchiq", 0x10);
-    sysbus_init_mmio(dev, &s->iomem);
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_vchiq, s);
+    sysbus_init_mmio(sbd, &s->iomem);
+    vmstate_register(dev, -1, &vmstate_bcm2835_vchiq, s);
 
     return 0;
 }

@@ -5,7 +5,7 @@
 # 21 "multiboot.S"
 # 1 "optionrom.h" 1
 # 23 "optionrom.h"
-# 1 "../../hw/fw_cfg.h" 1
+# 1 "../../include/hw/nvram/fw_cfg.h" 1
 # 24 "optionrom.h" 2
 # 38 "optionrom.h"
 .macro read_fw VAR
@@ -86,16 +86,13 @@ run_multiboot:
 
  xor %ebx, %ebx
 
- movl $4, %edi
+ xor %edi, %edi
 
 mmap_loop:
 
+ add $4, %di
+
  movl $20, %ecx
-
-
-
-
- .dc.b 0x26,0x67,0x66,0x89,0x4f,0xfc
 
  movl $0x0000e820, %eax
 
@@ -105,21 +102,63 @@ mmap_loop:
 mmap_check_entry:
 
  jb mmap_done
- and %bx, %bx
- jz mmap_done
-
 
 mmap_store_entry:
 
- mov $24, %ax
- mul %bx
- mov %ax, %di
+
+
+
+ .dc.b 0x26,0x67,0x66,0x89,0x4f,0xfc
+
+
+ add %ecx, %edi
  movw %di, %fs:0x2c
 
- add $4, %di
- jmp mmap_loop
+
+ test %ebx, %ebx
+ jnz mmap_loop
 
 mmap_done:
+
+
+ xor %di, %di
+ mov $0x100000, %edx
+upper_mem_entry:
+ cmp %fs:0x2c, %di
+ je upper_mem_done
+ add $4, %di
+
+
+ cmpl $1, %es:16(%di)
+ jne upper_mem_next
+
+
+ movl %es:4(%di), %eax
+ test %eax, %eax
+ jnz upper_mem_next
+
+
+ movl %es:(%di), %eax
+ cmp %eax, %edx
+ jb upper_mem_next
+ addl %es:8(%di), %eax
+ cmp %eax, %edx
+ jae upper_mem_next
+
+
+ mov %eax, %edx
+ xor %di, %di
+ jmp upper_mem_entry
+
+upper_mem_next:
+ addl %es:-4(%di), %edi
+ jmp upper_mem_entry
+
+upper_mem_done:
+ sub $0x100000, %edx
+ shr $10, %edx
+ mov %edx, %fs:0x8
+
 real_to_prot:
 
 lgdt:

@@ -416,7 +416,7 @@ static int xen_pt_register_regions(XenPCIPassthroughState *s)
             }
         }
 
-        memory_region_init_io(&s->bar[i], &ops, &s->dev,
+        memory_region_init_io(&s->bar[i], OBJECT(s), &ops, &s->dev,
                               "xen-pci-pt-bar", r->size);
         pci_register_bar(&s->dev, i, type, &s->bar[i]);
 
@@ -440,7 +440,7 @@ static int xen_pt_register_regions(XenPCIPassthroughState *s)
 
         s->bases[PCI_ROM_SLOT].access.maddr = d->rom.base_addr;
 
-        memory_region_init_rom_device(&s->rom, NULL, NULL,
+        memory_region_init_rom_device(&s->rom, OBJECT(s), NULL, NULL,
                                       "xen-pci-pt-rom", d->rom.size);
         pci_register_bar(&s->dev, PCI_ROM_SLOT, PCI_BASE_ADDRESS_MEM_PREFETCH,
                          &s->rom);
@@ -547,7 +547,7 @@ static void xen_pt_region_update(XenPCIPassthroughState *s,
     struct CheckBarArgs args = {
         .s = s,
         .addr = sec->offset_within_address_space,
-        .size = sec->size,
+        .size = int128_get64(sec->size),
         .rc = false,
     };
 
@@ -576,7 +576,7 @@ static void xen_pt_region_update(XenPCIPassthroughState *s,
     if (d->io_regions[bar].type & PCI_BASE_ADDRESS_SPACE_IO) {
         uint32_t guest_port = sec->offset_within_address_space;
         uint32_t machine_port = s->bases[bar].access.pio_base;
-        uint32_t size = sec->size;
+        uint32_t size = int128_get64(sec->size);
         rc = xc_domain_ioport_mapping(xen_xc, xen_domid,
                                       guest_port, machine_port, size,
                                       op);
@@ -588,7 +588,7 @@ static void xen_pt_region_update(XenPCIPassthroughState *s,
         pcibus_t guest_addr = sec->offset_within_address_space;
         pcibus_t machine_addr = s->bases[bar].access.maddr
             + sec->offset_within_region;
-        pcibus_t size = sec->size;
+        pcibus_t size = int128_get64(sec->size);
         rc = xc_domain_memory_mapping(xen_xc, xen_domid,
                                       XEN_PFN(guest_addr + XC_PAGE_SIZE - 1),
                                       XEN_PFN(machine_addr + XC_PAGE_SIZE - 1),
@@ -606,6 +606,7 @@ static void xen_pt_region_add(MemoryListener *l, MemoryRegionSection *sec)
     XenPCIPassthroughState *s = container_of(l, XenPCIPassthroughState,
                                              memory_listener);
 
+    memory_region_ref(sec->mr);
     xen_pt_region_update(s, sec, true);
 }
 
@@ -615,6 +616,7 @@ static void xen_pt_region_del(MemoryListener *l, MemoryRegionSection *sec)
                                              memory_listener);
 
     xen_pt_region_update(s, sec, false);
+    memory_region_unref(sec->mr);
 }
 
 static void xen_pt_io_region_add(MemoryListener *l, MemoryRegionSection *sec)
@@ -622,6 +624,7 @@ static void xen_pt_io_region_add(MemoryListener *l, MemoryRegionSection *sec)
     XenPCIPassthroughState *s = container_of(l, XenPCIPassthroughState,
                                              io_listener);
 
+    memory_region_ref(sec->mr);
     xen_pt_region_update(s, sec, true);
 }
 
@@ -631,6 +634,7 @@ static void xen_pt_io_region_del(MemoryListener *l, MemoryRegionSection *sec)
                                              io_listener);
 
     xen_pt_region_update(s, sec, false);
+    memory_region_unref(sec->mr);
 }
 
 static const MemoryListener xen_pt_memory_listener = {
@@ -752,7 +756,8 @@ static int xen_pt_initfn(PCIDevice *d)
 out:
     memory_listener_register(&s->memory_listener, &address_space_memory);
     memory_listener_register(&s->io_listener, &address_space_io);
-    XEN_PT_LOG(d, "Real physical device %02x:%02x.%d registered successfuly!\n",
+    XEN_PT_LOG(d,
+               "Real physical device %02x:%02x.%d registered successfully!\n",
                s->hostaddr.bus, s->hostaddr.slot, s->hostaddr.function);
 
     return 0;
@@ -825,6 +830,7 @@ static void xen_pci_passthrough_class_init(ObjectClass *klass, void *data)
     k->exit = xen_pt_unregister_device;
     k->config_read = xen_pt_pci_read_config;
     k->config_write = xen_pt_pci_write_config;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
     dc->desc = "Assign an host PCI device with Xen";
     dc->props = xen_pci_passthrough_properties;
 };

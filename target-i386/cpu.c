@@ -35,8 +35,6 @@
 #include "qapi/visitor.h"
 #include "sysemu/arch_init.h"
 
-#include "hyperv.h"
-
 #include "hw/hw.h"
 #if defined(CONFIG_KVM)
 #include <linux/kvm_para.h>
@@ -221,7 +219,7 @@ X86RegisterInfo32 x86_reg_info_32[CPU_NB_REGS32] = {
 
 const char *get_register_name_32(unsigned int reg)
 {
-    if (reg > CPU_NB_REGS32) {
+    if (reg >= CPU_NB_REGS32) {
         return NULL;
     }
     return x86_reg_info_32[reg].name;
@@ -669,10 +667,10 @@ static x86_def_t builtin_x86_defs[] = {
     },
     {
         .name = "Conroe",
-        .level = 2,
+        .level = 4,
         .vendor = CPUID_VENDOR_INTEL,
         .family = 6,
-        .model = 2,
+        .model = 15,
         .stepping = 3,
         .features[FEAT_1_EDX] =
             CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
@@ -691,10 +689,10 @@ static x86_def_t builtin_x86_defs[] = {
     },
     {
         .name = "Penryn",
-        .level = 2,
+        .level = 4,
         .vendor = CPUID_VENDOR_INTEL,
         .family = 6,
-        .model = 2,
+        .model = 23,
         .stepping = 3,
         .features[FEAT_1_EDX] =
             CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
@@ -714,10 +712,10 @@ static x86_def_t builtin_x86_defs[] = {
     },
     {
         .name = "Nehalem",
-        .level = 2,
+        .level = 4,
         .vendor = CPUID_VENDOR_INTEL,
         .family = 6,
-        .model = 2,
+        .model = 26,
         .stepping = 3,
         .features[FEAT_1_EDX] =
             CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
@@ -1475,9 +1473,11 @@ static void x86_cpu_get_feature_words(Object *obj, Visitor *v, void *opaque,
     error_propagate(errp, err);
 }
 
-static int cpu_x86_find_by_name(x86_def_t *x86_cpu_def, const char *name)
+static int cpu_x86_find_by_name(X86CPU *cpu, x86_def_t *x86_cpu_def,
+                                const char *name)
 {
     x86_def_t *def;
+    Error *err = NULL;
     int i;
 
     if (name == NULL) {
@@ -1485,6 +1485,8 @@ static int cpu_x86_find_by_name(x86_def_t *x86_cpu_def, const char *name)
     }
     if (kvm_enabled() && strcmp(name, "host") == 0) {
         kvm_cpu_fill_host(x86_cpu_def);
+        object_property_set_bool(OBJECT(cpu), true, "pmu", &err);
+        assert_no_error(err);
         return 0;
     }
 
@@ -1587,12 +1589,19 @@ static void cpu_x86_parse_featurestr(X86CPU *cpu, char *features, Error **errp)
                 object_property_parse(OBJECT(cpu), num, "tsc-frequency", errp);
             } else if (!strcmp(featurestr, "hv-spinlocks")) {
                 char *err;
+                const int min = 0xFFF;
                 numvalue = strtoul(val, &err, 0);
                 if (!*val || *err) {
                     error_setg(errp, "bad numerical value %s", val);
                     goto out;
                 }
-                hyperv_set_spinlock_retries(numvalue);
+                if (numvalue < min) {
+                    fprintf(stderr, "hv-spinlocks value shall always be >= 0x%x"
+                            ", fixup will be removed in future versions\n",
+                            min);
+                    numvalue = min;
+                }
+                cpu->hyperv_spinlock_attempts = numvalue;
             } else {
                 error_setg(errp, "unrecognized feature %s", featurestr);
                 goto out;
@@ -1602,9 +1611,9 @@ static void cpu_x86_parse_featurestr(X86CPU *cpu, char *features, Error **errp)
         } else if (!strcmp(featurestr, "enforce")) {
             check_cpuid = enforce_cpuid = 1;
         } else if (!strcmp(featurestr, "hv_relaxed")) {
-            hyperv_enable_relaxed_timing(true);
+            cpu->hyperv_relaxed_timing = true;
         } else if (!strcmp(featurestr, "hv_vapic")) {
-            hyperv_enable_vapic_recommended(true);
+            cpu->hyperv_vapic = true;
         } else {
             error_setg(errp, "feature string `%s' not in format (+feature|"
                        "-feature|feature=xyz)", featurestr);
@@ -1742,7 +1751,7 @@ static void cpu_x86_register(X86CPU *cpu, const char *name, Error **errp)
 
     memset(def, 0, sizeof(*def));
 
-    if (cpu_x86_find_by_name(def, name) < 0) {
+    if (cpu_x86_find_by_name(cpu, def, name) < 0) {
         error_setg(errp, "Unable to find CPU definition: %s", name);
         return;
     }
@@ -1820,7 +1829,11 @@ X86CPU *cpu_x86_create(const char *cpu_model, DeviceState *icc_bridge,
     }
 
 out:
-    error_propagate(errp, error);
+    if (error != NULL) {
+        error_propagate(errp, error);
+        object_unref(OBJECT(cpu));
+        cpu = NULL;
+    }
     g_strfreev(model_pieces);
     return cpu;
 }
@@ -1839,7 +1852,7 @@ X86CPU *cpu_x86_init(const char *cpu_model)
 
 out:
     if (error) {
-        fprintf(stderr, "%s\n", error_get_pretty(error));
+        error_report("%s", error_get_pretty(error));
         error_free(error);
         if (cpu != NULL) {
             object_unref(OBJECT(cpu));
@@ -2016,7 +2029,7 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         break;
     case 0xA:
         /* Architectural Performance Monitoring Leaf */
-        if (kvm_enabled()) {
+        if (kvm_enabled() && cpu->enable_pmu) {
             KVMState *s = cs->kvm_state;
 
             *eax = kvm_arch_get_supported_cpuid(s, 0xA, count, R_EAX);
@@ -2174,11 +2187,6 @@ static void x86_cpu_reset(CPUState *s)
     X86CPUClass *xcc = X86_CPU_GET_CLASS(cpu);
     CPUX86State *env = &cpu->env;
     int i;
-
-    if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-        qemu_log("CPU Reset (CPU %d)\n", s->cpu_index);
-        log_cpu_state(env, CPU_DUMP_FPU | CPU_DUMP_CCOP);
-    }
 
     xcc->parent_reset(s);
 
@@ -2338,6 +2346,7 @@ static void x86_cpu_apic_realize(X86CPU *cpu, Error **errp)
 
 static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
 {
+    CPUState *cs = CPU(dev);
     X86CPU *cpu = X86_CPU(dev);
     X86CPUClass *xcc = X86_CPU_GET_CLASS(dev);
     CPUX86State *env = &cpu->env;
@@ -2392,13 +2401,13 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
 #endif
 
     mce_init(cpu);
-    qemu_init_vcpu(&cpu->env);
+    qemu_init_vcpu(cs);
 
     x86_cpu_apic_realize(cpu, &local_err);
     if (local_err != NULL) {
         goto out;
     }
-    cpu_reset(CPU(cpu));
+    cpu_reset(cs);
 
     xcc->parent_realize(dev, &local_err);
 out:
@@ -2485,6 +2494,7 @@ static void x86_cpu_initfn(Object *obj)
                         x86_cpu_get_feature_words,
                         NULL, NULL, (void *)cpu->filtered_features, NULL);
 
+    cpu->hyperv_spinlock_attempts = HYPERV_SPINLOCK_NEVER_RETRY;
     env->cpuid_apic_id = x86_cpu_apic_id_from_index(cs->cpu_index);
 
     /* init various static tables used in TCG mode */
@@ -2505,6 +2515,32 @@ static int64_t x86_cpu_get_arch_id(CPUState *cs)
     return env->cpuid_apic_id;
 }
 
+static bool x86_cpu_get_paging_enabled(const CPUState *cs)
+{
+    X86CPU *cpu = X86_CPU(cs);
+
+    return cpu->env.cr[0] & CR0_PG_MASK;
+}
+
+static void x86_cpu_set_pc(CPUState *cs, vaddr value)
+{
+    X86CPU *cpu = X86_CPU(cs);
+
+    cpu->env.eip = value;
+}
+
+static void x86_cpu_synchronize_from_tb(CPUState *cs, TranslationBlock *tb)
+{
+    X86CPU *cpu = X86_CPU(cs);
+
+    cpu->env.eip = tb->pc - tb->cs_base;
+}
+
+static Property x86_cpu_properties[] = {
+    DEFINE_PROP_BOOL("pmu", X86CPU, enable_pmu, false),
+    DEFINE_PROP_END_OF_LIST()
+};
+
 static void x86_cpu_common_class_init(ObjectClass *oc, void *data)
 {
     X86CPUClass *xcc = X86_CPU_CLASS(oc);
@@ -2514,20 +2550,30 @@ static void x86_cpu_common_class_init(ObjectClass *oc, void *data)
     xcc->parent_realize = dc->realize;
     dc->realize = x86_cpu_realizefn;
     dc->bus_type = TYPE_ICC_BUS;
+    dc->props = x86_cpu_properties;
 
     xcc->parent_reset = cc->reset;
     cc->reset = x86_cpu_reset;
+    cc->reset_dump_flags = CPU_DUMP_FPU | CPU_DUMP_CCOP;
 
     cc->do_interrupt = x86_cpu_do_interrupt;
+    cc->dump_state = x86_cpu_dump_state;
+    cc->set_pc = x86_cpu_set_pc;
+    cc->synchronize_from_tb = x86_cpu_synchronize_from_tb;
+    cc->gdb_read_register = x86_cpu_gdb_read_register;
+    cc->gdb_write_register = x86_cpu_gdb_write_register;
+    cc->get_arch_id = x86_cpu_get_arch_id;
+    cc->get_paging_enabled = x86_cpu_get_paging_enabled;
 #ifndef CONFIG_USER_ONLY
+    cc->get_memory_mapping = x86_cpu_get_memory_mapping;
+    cc->get_phys_page_debug = x86_cpu_get_phys_page_debug;
     cc->write_elf64_note = x86_cpu_write_elf64_note;
     cc->write_elf64_qemunote = x86_cpu_write_elf64_qemunote;
     cc->write_elf32_note = x86_cpu_write_elf32_note;
     cc->write_elf32_qemunote = x86_cpu_write_elf32_qemunote;
+    cc->vmsd = &vmstate_x86_cpu;
 #endif
-    cpu_class_set_vmsd(cc, &vmstate_x86_cpu);
-
-    cc->get_arch_id = x86_cpu_get_arch_id;
+    cc->gdb_num_core_regs = CPU_NB_REGS * 2 + 25;
 }
 
 static const TypeInfo x86_cpu_type_info = {

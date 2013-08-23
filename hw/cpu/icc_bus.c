@@ -95,10 +95,17 @@ static void icc_bridge_init(Object *obj)
     /* Do not change order of registering regions,
      * APIC must be first registered region, board maps it by 0 index
      */
-    memory_region_init(&s->apic_container, "icc-apic-container",
+    memory_region_init(&s->apic_container, obj, "icc-apic-container",
                        APIC_SPACE_SIZE);
     sysbus_init_mmio(sb, &s->apic_container);
     s->icc_bus.apic_address_space = &s->apic_container;
+}
+
+static void icc_bridge_class_init(ObjectClass *oc, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(oc);
+
+    set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
 }
 
 static const TypeInfo icc_bridge_info = {
@@ -106,6 +113,7 @@ static const TypeInfo icc_bridge_info = {
     .parent = TYPE_SYS_BUS_DEVICE,
     .instance_init  = icc_bridge_init,
     .instance_size  = sizeof(ICCBridgeState),
+    .class_init = icc_bridge_class_init,
 };
 
 

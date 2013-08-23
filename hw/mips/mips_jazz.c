@@ -42,6 +42,8 @@
 #include "sysemu/blockdev.h"
 #include "hw/sysbus.h"
 #include "exec/address-spaces.h"
+#include "sysemu/qtest.h"
+#include "qemu/error-report.h"
 
 enum jazz_model_e
 {
@@ -99,10 +101,10 @@ static const MemoryRegionOps dma_dummy_ops = {
 
 static void cpu_request_exit(void *opaque, int irq, int level)
 {
-    CPUMIPSState *env = cpu_single_env;
+    CPUState *cpu = current_cpu;
 
-    if (env && level) {
-        cpu_exit(env);
+    if (cpu && level) {
+        cpu_exit(cpu);
     }
 }
 
@@ -119,6 +121,7 @@ static void mips_jazz_init(MemoryRegion *address_space,
     qemu_irq *rc4030, *i8259;
     rc4030_dma *dmas;
     void* rc4030_opaque;
+    MemoryRegion *isa = g_new(MemoryRegion, 1);
     MemoryRegion *rtc = g_new(MemoryRegion, 1);
     MemoryRegion *i8042 = g_new(MemoryRegion, 1);
     MemoryRegion *dma_dummy = g_new(MemoryRegion, 1);
@@ -152,14 +155,14 @@ static void mips_jazz_init(MemoryRegion *address_space,
     qemu_register_reset(main_cpu_reset, cpu);
 
     /* allocate RAM */
-    memory_region_init_ram(ram, "mips_jazz.ram", ram_size);
+    memory_region_init_ram(ram, NULL, "mips_jazz.ram", ram_size);
     vmstate_register_ram_global(ram);
     memory_region_add_subregion(address_space, 0, ram);
 
-    memory_region_init_ram(bios, "mips_jazz.bios", MAGNUM_BIOS_SIZE);
+    memory_region_init_ram(bios, NULL, "mips_jazz.bios", MAGNUM_BIOS_SIZE);
     vmstate_register_ram_global(bios);
     memory_region_set_readonly(bios, true);
-    memory_region_init_alias(bios2, "mips_jazz.bios", bios,
+    memory_region_init_alias(bios2, NULL, "mips_jazz.bios", bios,
                              0, MAGNUM_BIOS_SIZE);
     memory_region_add_subregion(address_space, 0x1fc00000LL, bios);
     memory_region_add_subregion(address_space, 0xfff00000LL, bios2);
@@ -175,9 +178,8 @@ static void mips_jazz_init(MemoryRegion *address_space,
     } else {
         bios_size = -1;
     }
-    if (bios_size < 0 || bios_size > MAGNUM_BIOS_SIZE) {
-        fprintf(stderr, "qemu: Could not load MIPS bios '%s'\n",
-                bios_name);
+    if ((bios_size < 0 || bios_size > MAGNUM_BIOS_SIZE) && !qtest_enabled()) {
+        error_report("Could not load MIPS bios '%s'", bios_name);
         exit(1);
     }
 
@@ -188,7 +190,7 @@ static void mips_jazz_init(MemoryRegion *address_space,
     /* Chipset */
     rc4030_opaque = rc4030_init(env->irq[6], env->irq[3], &rc4030, &dmas,
                                 address_space);
-    memory_region_init_io(dma_dummy, &dma_dummy_ops, NULL, "dummy_dma", 0x1000);
+    memory_region_init_io(dma_dummy, NULL, &dma_dummy_ops, NULL, "dummy_dma", 0x1000);
     memory_region_add_subregion(address_space, 0x8000d000, dma_dummy);
 
     /* ISA devices */
@@ -201,7 +203,9 @@ static void mips_jazz_init(MemoryRegion *address_space,
     pcspk_init(isa_bus, pit);
 
     /* ISA IO space at 0x90000000 */
-    isa_mmio_init(0x90000000, 0x01000000);
+    memory_region_init_alias(isa, NULL, "isa_mmio",
+                             get_system_io(), 0, 0x01000000);
+    memory_region_add_subregion(address_space, 0x90000000, isa);
     isa_mem_base = 0x11000000;
 
     /* Video card */
@@ -216,7 +220,7 @@ static void mips_jazz_init(MemoryRegion *address_space,
         {
             /* Simple ROM, so user doesn't have to provide one */
             MemoryRegion *rom_mr = g_new(MemoryRegion, 1);
-            memory_region_init_ram(rom_mr, "g364fb.rom", 0x80000);
+            memory_region_init_ram(rom_mr, NULL, "g364fb.rom", 0x80000);
             vmstate_register_ram_global(rom_mr);
             memory_region_set_readonly(rom_mr, true);
             uint8_t *rom = memory_region_get_ram_ptr(rom_mr);
@@ -266,7 +270,7 @@ static void mips_jazz_init(MemoryRegion *address_space,
 
     /* Real time clock */
     rtc_init(isa_bus, 1980, NULL);
-    memory_region_init_io(rtc, &rtc_ops, NULL, "rtc", 0x1000);
+    memory_region_init_io(rtc, NULL, &rtc_ops, NULL, "rtc", 0x1000);
     memory_region_add_subregion(address_space, 0x80004000, rtc);
 
     /* Keyboard (i8042) */

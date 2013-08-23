@@ -66,7 +66,7 @@ static inline void zynq_init_spi_flashes(uint32_t base_addr, qemu_irq irq,
     int num_busses =  is_qspi ? NUM_QSPI_BUSSES : 1;
     int num_ss = is_qspi ? NUM_QSPI_FLASHES : NUM_SPI_FLASHES;
 
-    dev = qdev_create(NULL, "xilinx,spips");
+    dev = qdev_create(NULL, is_qspi ? "xlnx.ps7-qspi" : "xlnx.ps7-spi");
     qdev_prop_set_uint8(dev, "num-txrx-bytes", is_qspi ? 4 : 1);
     qdev_prop_set_uint8(dev, "num-ss-bits", num_ss);
     qdev_prop_set_uint8(dev, "num-busses", num_busses);
@@ -108,11 +108,9 @@ static void zynq_init(QEMUMachineInitArgs *args)
     MemoryRegion *ocm_ram = g_new(MemoryRegion, 1);
     DeviceState *dev;
     SysBusDevice *busdev;
-    qemu_irq *irqp;
     qemu_irq pic[64];
     NICInfo *nd;
     int n;
-    qemu_irq cpu_irq;
 
     if (!cpu_model) {
         cpu_model = "cortex-a9";
@@ -123,8 +121,6 @@ static void zynq_init(QEMUMachineInitArgs *args)
         fprintf(stderr, "Unable to find CPU definition\n");
         exit(1);
     }
-    irqp = arm_pic_init_cpu(cpu);
-    cpu_irq = irqp[ARM_PIC_CPU_IRQ];
 
     /* max 2GB ram */
     if (ram_size > 0x80000000) {
@@ -132,12 +128,12 @@ static void zynq_init(QEMUMachineInitArgs *args)
     }
 
     /* DDR remapped to address zero.  */
-    memory_region_init_ram(ext_ram, "zynq.ext_ram", ram_size);
+    memory_region_init_ram(ext_ram, NULL, "zynq.ext_ram", ram_size);
     vmstate_register_ram_global(ext_ram);
     memory_region_add_subregion(address_space_mem, 0, ext_ram);
 
     /* 256K of on-chip memory */
-    memory_region_init_ram(ocm_ram, "zynq.ocm_ram", 256 << 10);
+    memory_region_init_ram(ocm_ram, NULL, "zynq.ocm_ram", 256 << 10);
     vmstate_register_ram_global(ocm_ram);
     memory_region_add_subregion(address_space_mem, 0xFFFC0000, ocm_ram);
 
@@ -159,7 +155,8 @@ static void zynq_init(QEMUMachineInitArgs *args)
     qdev_init_nofail(dev);
     busdev = SYS_BUS_DEVICE(dev);
     sysbus_mmio_map(busdev, 0, 0xF8F00000);
-    sysbus_connect_irq(busdev, 0, cpu_irq);
+    sysbus_connect_irq(busdev, 0,
+                       qdev_get_gpio_in(DEVICE(cpu), ARM_CPU_IRQ));
 
     for (n = 0; n < 64; n++) {
         pic[n] = qdev_get_gpio_in(dev, n);
@@ -226,7 +223,7 @@ static void zynq_init(QEMUMachineInitArgs *args)
     zynq_binfo.nb_cpus = 1;
     zynq_binfo.board_id = 0xd32;
     zynq_binfo.loader_start = 0;
-    arm_load_kernel(arm_env_get_cpu(first_cpu), &zynq_binfo);
+    arm_load_kernel(ARM_CPU(first_cpu), &zynq_binfo);
 }
 
 static QEMUMachine zynq_machine = {

@@ -24,6 +24,10 @@
 
 #define NB_HCHANS 8
 
+
+#define TYPE_BCM2835_USB "bcm2835_usb"
+#define BCM2835_USB(obj) OBJECT_CHECK(bcm2835_usb_state, (obj), TYPE_BCM2835_USB)
+
 typedef struct bcm2835_usb_state_struct bcm2835_usb_state;
 
 typedef struct {
@@ -46,7 +50,8 @@ typedef struct {
 struct bcm2835_usb_state_struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
-    DMAContext *dma;
+    // DMAContext *dma;
+    AddressSpace *dma;
     
     USBBus bus;
     USBPort port;
@@ -622,12 +627,15 @@ static USBPortOps bcm2835_usb_port_ops = {
 static USBBusOps bcm2835_usb_bus_ops = {
 };
 
-static int bcm2835_usb_init(SysBusDevice *dev)
+static int bcm2835_usb_init(SysBusDevice *sbd)
 {
-    bcm2835_usb_state *s = FROM_SYSBUS(bcm2835_usb_state, dev);
+    // bcm2835_usb_state *s = FROM_SYSBUS(bcm2835_usb_state, dev);
     int n;
-    
-    s->dma = &dma_context_memory;
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_usb_state *s = BCM2835_USB(dev);
+
+    // s->dma = &dma_context_memory;
+    s->dma = &address_space_memory;
     
     s->gusbcfg = 0x20402700;
     s->hptxfsiz = 0x02002000;
@@ -666,19 +674,19 @@ static int bcm2835_usb_init(SysBusDevice *dev)
         usb_packet_init(&s->hchan[n].packet);
     }
     
-    memory_region_init_io(&s->iomem, &bcm2835_usb_ops, s, 
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_usb_ops, s, 
         "bcm2835_usb", 0x20000);
-    sysbus_init_mmio(dev, &s->iomem);    
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_usb, s);
+    sysbus_init_mmio(sbd, &s->iomem);    
+    vmstate_register(dev, -1, &vmstate_bcm2835_usb, s);
 
-    sysbus_init_irq(dev, &s->irq);
+    sysbus_init_irq(sbd, &s->irq);
 
     s->attached = 0;
     s->reset_done = 0;
     
     s->sof_timer = qemu_new_timer(vm_clock, SCALE_US, bcm2835_usb_sof_tick, s);
     
-    usb_bus_new(&s->bus, &bcm2835_usb_bus_ops, &dev->qdev);
+    usb_bus_new(&s->bus, &bcm2835_usb_bus_ops, dev);
     usb_register_port(&s->bus, &s->port, s, 0, &bcm2835_usb_port_ops, 
         USB_SPEED_MASK_LOW | USB_SPEED_MASK_FULL );
     return 0;

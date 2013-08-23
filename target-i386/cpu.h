@@ -549,6 +549,10 @@ typedef uint32_t FeatureWordArray[FEATURE_WORDS];
 #define CPUID_MWAIT_IBE     (1 << 1) /* Interrupts can exit capability */
 #define CPUID_MWAIT_EMX     (1 << 0) /* enumeration supported */
 
+#ifndef HYPERV_SPINLOCK_NEVER_RETRY
+#define HYPERV_SPINLOCK_NEVER_RETRY             0xFFFFFFFF
+#endif
+
 #define EXCP00_DIVZ	0
 #define EXCP01_DB	1
 #define EXCP02_NMI	2
@@ -1101,26 +1105,6 @@ static inline int cpu_mmu_index (CPUX86State *env)
         ? MMU_KSMAP_IDX : MMU_KERNEL_IDX;
 }
 
-#undef EAX
-#define EAX (env->regs[R_EAX])
-#undef ECX
-#define ECX (env->regs[R_ECX])
-#undef EDX
-#define EDX (env->regs[R_EDX])
-#undef EBX
-#define EBX (env->regs[R_EBX])
-#undef ESP
-#define ESP (env->regs[R_ESP])
-#undef EBP
-#define EBP (env->regs[R_EBP])
-#undef ESI
-#define ESI (env->regs[R_ESI])
-#undef EDI
-#define EDI (env->regs[R_EDI])
-#undef EIP
-#define EIP (env->eip)
-#define DF  (env->df)
-
 #define CC_DST  (env->cc_dst)
 #define CC_SRC  (env->cc_src)
 #define CC_SRC2 (env->cc_src2)
@@ -1145,15 +1129,6 @@ static inline target_long lshift(target_long x, int n)
 /* translate.c */
 void optimize_flags_init(void);
 
-#if defined(CONFIG_USER_ONLY)
-static inline void cpu_clone_regs(CPUX86State *env, target_ulong newsp)
-{
-    if (newsp)
-        env->regs[R_ESP] = newsp;
-    env->regs[R_EAX] = 0;
-}
-#endif
-
 #include "exec/cpu-all.h"
 #include "svm.h"
 
@@ -1176,11 +1151,6 @@ static inline bool cpu_has_work(CPUState *cs)
 }
 
 #include "exec/exec-all.h"
-
-static inline void cpu_pc_from_tb(CPUX86State *env, TranslationBlock *tb)
-{
-    env->eip = tb->pc - tb->cs_base;
-}
 
 static inline void cpu_get_tb_cpu_state(CPUX86State *env, target_ulong *pc,
                                         target_ulong *cs_base, int *flags)
@@ -1214,7 +1184,7 @@ uint32_t cpu_cc_compute_all(CPUX86State *env1, int op);
 
 static inline uint32_t cpu_compute_eflags(CPUX86State *env)
 {
-    return env->eflags | cpu_cc_compute_all(env, CC_OP) | (DF & DF_MASK);
+    return env->eflags | cpu_cc_compute_all(env, CC_OP) | (env->df & DF_MASK);
 }
 
 /* NOTE: CC_OP must be modified manually to CC_OP_EFLAGS */
@@ -1222,7 +1192,7 @@ static inline void cpu_load_eflags(CPUX86State *env, int eflags,
                                    int update_mask)
 {
     CC_SRC = eflags & (CC_O | CC_S | CC_Z | CC_A | CC_P | CC_C);
-    DF = 1 - (2 * ((eflags >> 10) & 1));
+    env->df = 1 - (2 * ((eflags >> 10) & 1));
     env->eflags = (env->eflags & ~update_mask) |
         (eflags & update_mask) | 0x2;
 }
@@ -1249,7 +1219,7 @@ void cpu_vmexit(CPUX86State *nenv, uint32_t exit_code, uint64_t exit_info_1);
 /* seg_helper.c */
 void do_interrupt_x86_hardirq(CPUX86State *env, int intno, int is_hw);
 
-void do_smm_enter(CPUX86State *env1);
+void do_smm_enter(X86CPU *cpu);
 
 void cpu_report_tpr_access(CPUX86State *env, TPRAccess access);
 

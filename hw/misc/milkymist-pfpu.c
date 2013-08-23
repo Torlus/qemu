@@ -116,8 +116,13 @@ static const char *opcode_to_str[] = {
 };
 #endif
 
+#define TYPE_MILKYMIST_PFPU "milkymist-pfpu"
+#define MILKYMIST_PFPU(obj) \
+    OBJECT_CHECK(MilkymistPFPUState, (obj), TYPE_MILKYMIST_PFPU)
+
 struct MilkymistPFPUState {
-    SysBusDevice busdev;
+    SysBusDevice parent_obj;
+
     MemoryRegion regs_region;
     CharDriverState *chr;
     qemu_irq irq;
@@ -473,7 +478,7 @@ static const MemoryRegionOps pfpu_mmio_ops = {
 
 static void milkymist_pfpu_reset(DeviceState *d)
 {
-    MilkymistPFPUState *s = container_of(d, MilkymistPFPUState, busdev.qdev);
+    MilkymistPFPUState *s = MILKYMIST_PFPU(d);
     int i;
 
     for (i = 0; i < R_MAX; i++) {
@@ -493,11 +498,11 @@ static void milkymist_pfpu_reset(DeviceState *d)
 
 static int milkymist_pfpu_init(SysBusDevice *dev)
 {
-    MilkymistPFPUState *s = FROM_SYSBUS(typeof(*s), dev);
+    MilkymistPFPUState *s = MILKYMIST_PFPU(dev);
 
     sysbus_init_irq(dev, &s->irq);
 
-    memory_region_init_io(&s->regs_region, &pfpu_mmio_ops, s,
+    memory_region_init_io(&s->regs_region, OBJECT(dev), &pfpu_mmio_ops, s,
             "milkymist-pfpu", MICROCODE_END * 4);
     sysbus_init_mmio(dev, &s->regs_region);
 
@@ -530,7 +535,7 @@ static void milkymist_pfpu_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo milkymist_pfpu_info = {
-    .name          = "milkymist-pfpu",
+    .name          = TYPE_MILKYMIST_PFPU,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(MilkymistPFPUState),
     .class_init    = milkymist_pfpu_class_init,

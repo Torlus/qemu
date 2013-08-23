@@ -248,7 +248,7 @@ static void omap_dma_deactivate_channel(struct omap_dma_s *s,
 
     /* Don't deactive the channel if it is synchronized and the DMA request is
        active */
-    if (ch->sync && ch->enable && (s->dma->drqbmp & (1 << ch->sync)))
+    if (ch->sync && ch->enable && (s->dma->drqbmp & (1ULL << ch->sync)))
         return;
 
     if (ch->active) {
@@ -268,8 +268,9 @@ static void omap_dma_enable_channel(struct omap_dma_s *s,
         /* TODO: theoretically if ch->sync && ch->prefetch &&
          * !s->dma->drqbmp[ch->sync], we should also activate and fetch
          * from source and then stall until signalled.  */
-        if ((!ch->sync) || (s->dma->drqbmp & (1 << ch->sync)))
+        if ((!ch->sync) || (s->dma->drqbmp & (1ULL << ch->sync))) {
             omap_dma_activate_channel(s, ch);
+        }
     }
 }
 
@@ -1551,12 +1552,12 @@ static void omap_dma_request(void *opaque, int drq, int req)
     struct omap_dma_s *s = (struct omap_dma_s *) opaque;
     /* The request pins are level triggered in QEMU.  */
     if (req) {
-        if (~s->dma->drqbmp & (1 << drq)) {
-            s->dma->drqbmp |= 1 << drq;
+        if (~s->dma->drqbmp & (1ULL << drq)) {
+            s->dma->drqbmp |= 1ULL << drq;
             omap_dma_process_request(s, drq);
         }
     } else
-        s->dma->drqbmp &= ~(1 << drq);
+        s->dma->drqbmp &= ~(1ULL << drq);
 }
 
 /* XXX: this won't be needed once soc_dma knows about clocks.  */
@@ -1663,7 +1664,7 @@ struct soc_dma_s *omap_dma_init(hwaddr base, qemu_irq *irqs,
     omap_dma_reset(s->dma);
     omap_dma_clk_update(s, 0, 1);
 
-    memory_region_init_io(&s->iomem, &omap_dma_ops, s, "omap.dma", memsize);
+    memory_region_init_io(&s->iomem, NULL, &omap_dma_ops, s, "omap.dma", memsize);
     memory_region_add_subregion(sysmem, base, &s->iomem);
 
     mpu->drq = s->dma->drq;
@@ -2085,7 +2086,7 @@ struct soc_dma_s *omap_dma4_init(hwaddr base, qemu_irq *irqs,
     omap_dma_reset(s->dma);
     omap_dma_clk_update(s, 0, !!s->dma->freq);
 
-    memory_region_init_io(&s->iomem, &omap_dma4_ops, s, "omap.dma4", 0x1000);
+    memory_region_init_io(&s->iomem, NULL, &omap_dma4_ops, s, "omap.dma4", 0x1000);
     memory_region_add_subregion(sysmem, base, &s->iomem);
 
     mpu->drq = s->dma->drq;

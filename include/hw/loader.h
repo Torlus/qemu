@@ -1,6 +1,7 @@
 #ifndef LOADER_H
 #define LOADER_H
 #include "qapi/qmp/qdict.h"
+#include "hw/nvram/fw_cfg.h"
 
 /* loader.c */
 int get_image_size(const char *filename);
@@ -16,6 +17,19 @@ int load_aout(const char *filename, hwaddr addr, int max_sz,
 int load_uimage(const char *filename, hwaddr *ep,
                 hwaddr *loadaddr, int *is_linux);
 
+/**
+ * load_ramdisk:
+ * @filename: Path to the ramdisk image
+ * @addr: Memory address to load the ramdisk to
+ * @max_sz: Maximum allowed ramdisk size (for non-u-boot ramdisks)
+ *
+ * Load a ramdisk image with U-Boot header to the specified memory
+ * address.
+ *
+ * Returns the size of the loaded image on success, -1 otherwise.
+ */
+int load_ramdisk(const char *filename, hwaddr addr, uint64_t max_sz);
+
 ssize_t read_targphys(const char *name,
                       int fd, hwaddr dst_addr, size_t nbytes);
 void pstrcpy_targphys(const char *name,
@@ -30,7 +44,7 @@ int rom_add_blob(const char *name, const void *blob, size_t len,
 int rom_add_elf_program(const char *name, void *data, size_t datasize,
                         size_t romsize, hwaddr addr);
 int rom_load_all(void);
-void rom_set_fw(void *f);
+void rom_set_fw(FWCfgState *f);
 int rom_copy(uint8_t *dest, hwaddr addr, size_t size);
 void *rom_ptr(hwaddr addr);
 void do_info_roms(Monitor *mon, const QDict *qdict);

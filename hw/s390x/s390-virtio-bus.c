@@ -38,10 +38,10 @@
 /* #define DEBUG_S390 */
 
 #ifdef DEBUG_S390
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { fprintf(stderr, fmt, ## __VA_ARGS__); } while (0)
 #else
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { } while (0)
 #endif
 
@@ -300,7 +300,7 @@ static int s390_virtio_rng_init(VirtIOS390Device *s390_dev)
     }
 
     object_property_set_link(OBJECT(dev),
-                             OBJECT(dev->vdev.conf.default_backend), "rng",
+                             OBJECT(dev->vdev.conf.rng), "rng",
                              NULL);
 
     return s390_virtio_device_init(s390_dev, VIRTIO_DEVICE(vdev));

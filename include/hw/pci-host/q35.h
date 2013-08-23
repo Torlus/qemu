@@ -43,7 +43,10 @@
      OBJECT_CHECK(MCHPCIState, (obj), TYPE_MCH_PCI_DEVICE)
 
 typedef struct MCHPCIState {
-    PCIDevice d;
+    /*< private >*/
+    PCIDevice parent_obj;
+    /*< public >*/
+
     MemoryRegion *ram_memory;
     MemoryRegion *pci_address_space;
     MemoryRegion *system_memory;
@@ -52,13 +55,19 @@ typedef struct MCHPCIState {
     MemoryRegion smram_region;
     MemoryRegion pci_hole;
     MemoryRegion pci_hole_64bit;
+    PcPciInfo pci_info;
     uint8_t smm_enabled;
     ram_addr_t below_4g_mem_size;
     ram_addr_t above_4g_mem_size;
+    uint64_t pci_hole64_size;
+    PcGuestInfo *guest_info;
 } MCHPCIState;
 
 typedef struct Q35PCIHost {
-    PCIExpressHost host;
+    /*< private >*/
+    PCIExpressHost parent_obj;
+    /*< public >*/
+
     MCHPCIState mch;
 } Q35PCIHost;
 
@@ -81,6 +90,7 @@ typedef struct Q35PCIHost {
 #define MCH_HOST_BRIDGE_PCIEXBAR               0x60    /* 64bit register */
 #define MCH_HOST_BRIDGE_PCIEXBAR_SIZE          8       /* 64bit register */
 #define MCH_HOST_BRIDGE_PCIEXBAR_DEFAULT       0xb0000000
+#define MCH_HOST_BRIDGE_PCIEXBAR_MAX           (0x10000000) /* 256M */
 #define MCH_HOST_BRIDGE_PCIEXBAR_ADMSK         Q35_MASK(64, 35, 28)
 #define MCH_HOST_BRIDGE_PCIEXBAR_128ADMSK      ((uint64_t)(1 << 26))
 #define MCH_HOST_BRIDGE_PCIEXBAR_64ADMSK       ((uint64_t)(1 << 25))

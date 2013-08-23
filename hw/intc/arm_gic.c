@@ -20,6 +20,7 @@
 
 #include "hw/sysbus.h"
 #include "gic_internal.h"
+#include "qom/cpu.h"
 
 //#define DEBUG_GIC
 
@@ -39,8 +40,7 @@ static const uint8_t gic_id[] = {
 static inline int gic_get_current_cpu(GICState *s)
 {
     if (s->num_cpu > 1) {
-        CPUState *cpu = ENV_GET_CPU(cpu_single_env);
-        return cpu->cpu_index;
+        return current_cpu->cpu_index;
     }
     return 0;
 }
@@ -639,6 +639,7 @@ static const MemoryRegionOps gic_cpu_ops = {
 
 void gic_init_irqs_and_distributor(GICState *s, int num_irq)
 {
+    SysBusDevice *sbd = SYS_BUS_DEVICE(s);
     int i;
 
     i = s->num_irq - GIC_INTERNAL;
@@ -652,11 +653,12 @@ void gic_init_irqs_and_distributor(GICState *s, int num_irq)
     if (s->revision != REV_NVIC) {
         i += (GIC_INTERNAL * s->num_cpu);
     }
-    qdev_init_gpio_in(&s->busdev.qdev, gic_set_irq, i);
+    qdev_init_gpio_in(DEVICE(s), gic_set_irq, i);
     for (i = 0; i < NUM_CPU(s); i++) {
-        sysbus_init_irq(&s->busdev, &s->parent_irq[i]);
+        sysbus_init_irq(sbd, &s->parent_irq[i]);
     }
-    memory_region_init_io(&s->iomem, &gic_dist_ops, s, "gic_dist", 0x1000);
+    memory_region_init_io(&s->iomem, OBJECT(s), &gic_dist_ops, s,
+                          "gic_dist", 0x1000);
 }
 
 static void arm_gic_realize(DeviceState *dev, Error **errp)
@@ -682,12 +684,12 @@ static void arm_gic_realize(DeviceState *dev, Error **errp)
      * GIC v2 defines a larger memory region (0x1000) so this will need
      * to be extended when we implement A15.
      */
-    memory_region_init_io(&s->cpuiomem[0], &gic_thiscpu_ops, s,
+    memory_region_init_io(&s->cpuiomem[0], OBJECT(s), &gic_thiscpu_ops, s,
                           "gic_cpu", 0x100);
     for (i = 0; i < NUM_CPU(s); i++) {
         s->backref[i] = s;
-        memory_region_init_io(&s->cpuiomem[i+1], &gic_cpu_ops, &s->backref[i],
-                              "gic_cpu", 0x100);
+        memory_region_init_io(&s->cpuiomem[i+1], OBJECT(s), &gic_cpu_ops,
+                              &s->backref[i], "gic_cpu", 0x100);
     }
     /* Distributor */
     sysbus_init_mmio(sbd, &s->iomem);

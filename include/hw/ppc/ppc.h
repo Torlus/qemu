@@ -73,8 +73,6 @@ void ppc6xx_irq_init (CPUPPCState *env);
 void ppc970_irq_init (CPUPPCState *env);
 void ppcPOWER7_irq_init (CPUPPCState *env);
 
-void ppce500_set_mpic_proxy(bool enabled);
-
 /* PPC machines for OpenBIOS */
 enum {
     ARCH_PREP = 0,
@@ -87,6 +85,7 @@ enum {
 #define FW_CFG_PPC_HEIGHT	(FW_CFG_ARCH_LOCAL + 0x01)
 #define FW_CFG_PPC_DEPTH	(FW_CFG_ARCH_LOCAL + 0x02)
 #define FW_CFG_PPC_TBFREQ	(FW_CFG_ARCH_LOCAL + 0x03)
+#define FW_CFG_PPC_CLOCKFREQ	(FW_CFG_ARCH_LOCAL + 0x04)
 #define FW_CFG_PPC_IS_KVM       (FW_CFG_ARCH_LOCAL + 0x05)
 #define FW_CFG_PPC_KVM_HC       (FW_CFG_ARCH_LOCAL + 0x06)
 #define FW_CFG_PPC_KVM_PID      (FW_CFG_ARCH_LOCAL + 0x07)

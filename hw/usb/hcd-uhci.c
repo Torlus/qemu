@@ -189,6 +189,7 @@ typedef struct UHCI_QH {
 
 static void uhci_async_cancel(UHCIAsync *async);
 static void uhci_queue_fill(UHCIQueue *q, UHCI_TD *td);
+static void uhci_resume(void *opaque);
 
 static inline int32_t uhci_queue_token(UHCI_TD *td)
 {
@@ -498,6 +499,12 @@ static void uhci_port_write(void *opaque, hwaddr addr,
             return;
         }
         s->cmd = val;
+        if (val & UHCI_CMD_EGSM) {
+            if ((s->ports[0].ctrl & UHCI_PORT_RD) ||
+                (s->ports[1].ctrl & UHCI_PORT_RD)) {
+                uhci_resume(s);
+            }
+        }
         break;
     case 0x02:
         s->status &= ~val;
@@ -1259,7 +1266,9 @@ static int usb_uhci_common_initfn(PCIDevice *dev)
 
     qemu_register_reset(uhci_reset, s);
 
-    memory_region_init_io(&s->io_bar, &uhci_ioport_ops, s, "uhci", 0x20);
+    memory_region_init_io(&s->io_bar, OBJECT(s), &uhci_ioport_ops, s,
+                          "uhci", 0x20);
+
     /* Use region 4 for consistency with real hardware.  BSD guests seem
        to rely on this.  */
     pci_register_bar(&s->dev, 4, PCI_BASE_ADDRESS_SPACE_IO, &s->io_bar);
@@ -1313,6 +1322,7 @@ static void uhci_class_init(ObjectClass *klass, void *data)
     k->no_hotplug = 1;
     dc->vmsd = &vmstate_uhci;
     dc->props = uhci_properties;
+    set_bit(DEVICE_CATEGORY_USB, dc->categories);
     u->info = *info;
 }
 

@@ -32,6 +32,10 @@
 
 #define FW_CFG_SIZE 2
 #define FW_CFG_DATA_SIZE 1
+#define TYPE_FW_CFG "fw_cfg"
+#define FW_CFG_NAME "fw_cfg"
+#define FW_CFG_PATH "/machine/" FW_CFG_NAME
+#define FW_CFG(obj) OBJECT_CHECK(FWCfgState, (obj), TYPE_FW_CFG)
 
 typedef struct FWCfgEntry {
     uint32_t len;
@@ -41,7 +45,10 @@ typedef struct FWCfgEntry {
 } FWCfgEntry;
 
 struct FWCfgState {
-    SysBusDevice busdev;
+    /*< private >*/
+    SysBusDevice parent_obj;
+    /*< public >*/
+
     MemoryRegion ctl_iomem, data_iomem, comb_iomem;
     uint32_t ctl_iobase, data_iobase;
     FWCfgEntry entries[2][FW_CFG_MAX_ENTRY];
@@ -54,7 +61,7 @@ struct FWCfgState {
 #define JPG_FILE 0
 #define BMP_FILE 1
 
-static char *read_splashfile(char *filename, size_t *file_sizep,
+static char *read_splashfile(char *filename, gsize *file_sizep,
                              int *file_typep)
 {
     GError *err = NULL;
@@ -112,7 +119,7 @@ static void fw_cfg_bootsplash(FWCfgState *s)
     const char *boot_splash_filename = NULL;
     char *p;
     char *filename, *file_data;
-    size_t file_size;
+    gsize file_size;
     int file_type;
     const char *temp;
 
@@ -317,13 +324,13 @@ static const MemoryRegionOps fw_cfg_data_mem_ops = {
 static const MemoryRegionOps fw_cfg_comb_mem_ops = {
     .read = fw_cfg_comb_read,
     .write = fw_cfg_comb_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
     .valid.accepts = fw_cfg_comb_valid,
 };
 
 static void fw_cfg_reset(DeviceState *d)
 {
-    FWCfgState *s = DO_UPCAST(FWCfgState, busdev.qdev, d);
+    FWCfgState *s = FW_CFG(d);
 
     fw_cfg_select(s, 0);
 }
@@ -486,17 +493,16 @@ FWCfgState *fw_cfg_init(uint32_t ctl_port, uint32_t data_port,
     SysBusDevice *d;
     FWCfgState *s;
 
-    dev = qdev_create(NULL, "fw_cfg");
+    dev = qdev_create(NULL, TYPE_FW_CFG);
     qdev_prop_set_uint32(dev, "ctl_iobase", ctl_port);
     qdev_prop_set_uint32(dev, "data_iobase", data_port);
     d = SYS_BUS_DEVICE(dev);
 
-    s = DO_UPCAST(FWCfgState, busdev.qdev, dev);
+    s = FW_CFG(dev);
 
-    if (!object_resolve_path("/machine/fw_cfg", NULL)) {
-        object_property_add_child(qdev_get_machine(), "fw_cfg", OBJECT(s),
-                                  NULL);
-    }
+    assert(!object_resolve_path(FW_CFG_PATH, NULL));
+
+    object_property_add_child(qdev_get_machine(), FW_CFG_NAME, OBJECT(s), NULL);
 
     qdev_init_nofail(dev);
 
@@ -520,31 +526,38 @@ FWCfgState *fw_cfg_init(uint32_t ctl_port, uint32_t data_port,
     return s;
 }
 
-static int fw_cfg_init1(SysBusDevice *dev)
+static void fw_cfg_initfn(Object *obj)
 {
-    FWCfgState *s = FROM_SYSBUS(FWCfgState, dev);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
+    FWCfgState *s = FW_CFG(obj);
 
-    memory_region_init_io(&s->ctl_iomem, &fw_cfg_ctl_mem_ops, s,
+    memory_region_init_io(&s->ctl_iomem, OBJECT(s), &fw_cfg_ctl_mem_ops, s,
                           "fwcfg.ctl", FW_CFG_SIZE);
-    sysbus_init_mmio(dev, &s->ctl_iomem);
-    memory_region_init_io(&s->data_iomem, &fw_cfg_data_mem_ops, s,
+    sysbus_init_mmio(sbd, &s->ctl_iomem);
+    memory_region_init_io(&s->data_iomem, OBJECT(s), &fw_cfg_data_mem_ops, s,
                           "fwcfg.data", FW_CFG_DATA_SIZE);
-    sysbus_init_mmio(dev, &s->data_iomem);
+    sysbus_init_mmio(sbd, &s->data_iomem);
     /* In case ctl and data overlap: */
-    memory_region_init_io(&s->comb_iomem, &fw_cfg_comb_mem_ops, s,
+    memory_region_init_io(&s->comb_iomem, OBJECT(s), &fw_cfg_comb_mem_ops, s,
                           "fwcfg", FW_CFG_SIZE);
+}
+
+static void fw_cfg_realize(DeviceState *dev, Error **errp)
+{
+    FWCfgState *s = FW_CFG(dev);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
 
     if (s->ctl_iobase + 1 == s->data_iobase) {
-        sysbus_add_io(dev, s->ctl_iobase, &s->comb_iomem);
+        sysbus_add_io(sbd, s->ctl_iobase, &s->comb_iomem);
     } else {
         if (s->ctl_iobase) {
-            sysbus_add_io(dev, s->ctl_iobase, &s->ctl_iomem);
+            sysbus_add_io(sbd, s->ctl_iobase, &s->ctl_iomem);
         }
         if (s->data_iobase) {
-            sysbus_add_io(dev, s->data_iobase, &s->data_iomem);
+            sysbus_add_io(sbd, s->data_iobase, &s->data_iomem);
         }
     }
-    return 0;
 }
 
 static Property fw_cfg_properties[] = {
@@ -553,12 +566,16 @@ static Property fw_cfg_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
+FWCfgState *fw_cfg_find(void)
+{
+    return FW_CFG(object_resolve_path(FW_CFG_PATH, NULL));
+}
+
 static void fw_cfg_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
-    k->init = fw_cfg_init1;
+    dc->realize = fw_cfg_realize;
     dc->no_user = 1;
     dc->reset = fw_cfg_reset;
     dc->vmsd = &vmstate_fw_cfg;
@@ -566,9 +583,10 @@ static void fw_cfg_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo fw_cfg_info = {
-    .name          = "fw_cfg",
+    .name          = TYPE_FW_CFG,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(FWCfgState),
+    .instance_init = fw_cfg_initfn,
     .class_init    = fw_cfg_class_init,
 };
 

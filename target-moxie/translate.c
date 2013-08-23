@@ -74,9 +74,11 @@ static int extract_branch_offset(int opcode)
   return (((signed short)((opcode & ((1 << 10) - 1)) << 6)) >> 6) << 1;
 }
 
-void cpu_dump_state(CPUArchState *env, FILE *f, fprintf_function cpu_fprintf,
-                    int flags)
+void moxie_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
+                          int flags)
 {
+    MoxieCPU *cpu = MOXIE_CPU(cs);
+    CPUMoxieState *env = &cpu->env;
     int i;
     cpu_fprintf(f, "pc=0x%08x\n", env->pc);
     cpu_fprintf(f, "$fp=0x%08x $sp=0x%08x $r0=0x%08x $r1=0x%08x\n",
@@ -818,10 +820,11 @@ static int decode_opc(MoxieCPU *cpu, DisasContext *ctx)
 }
 
 /* generate intermediate code for basic block 'tb'.  */
-static void
+static inline void
 gen_intermediate_code_internal(MoxieCPU *cpu, TranslationBlock *tb,
                                bool search_pc)
 {
+    CPUState *cs = CPU(cpu);
     DisasContext ctx;
     target_ulong pc_start;
     uint16_t *gen_opc_end;
@@ -869,7 +872,7 @@ gen_intermediate_code_internal(MoxieCPU *cpu, TranslationBlock *tb,
         ctx.pc += decode_opc(cpu, &ctx);
         num_insns++;
 
-        if (env->singlestep_enabled) {
+        if (cs->singlestep_enabled) {
             break;
         }
 
@@ -878,7 +881,7 @@ gen_intermediate_code_internal(MoxieCPU *cpu, TranslationBlock *tb,
         }
     } while (ctx.bstate == BS_NONE && tcg_ctx.gen_opc_ptr < gen_opc_end);
 
-    if (env->singlestep_enabled) {
+    if (cs->singlestep_enabled) {
         tcg_gen_movi_tl(cpu_pc, ctx.pc);
         gen_helper_debug(cpu_env);
     } else {

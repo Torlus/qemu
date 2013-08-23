@@ -18,7 +18,6 @@
 #include "qemu/error-report.h"
 #include "hw/virtio/dataplane/vring.h"
 #include "ioq.h"
-#include "migration/migration.h"
 #include "block/block.h"
 #include "hw/virtio/virtio-blk.h"
 #include "virtio-blk.h"
@@ -69,8 +68,6 @@ struct VirtIOBlockDataPlane {
                                              queue */
 
     unsigned int num_reqs;
-
-    Error *migration_blocker;
 };
 
 /* Raise an interrupt to signal guest, if necessary */
@@ -264,11 +261,6 @@ static int process_request(IOQueue *ioq, struct iovec iov[],
     }
 }
 
-static int flush_true(EventNotifier *e)
-{
-    return true;
-}
-
 static void handle_notify(EventNotifier *e)
 {
     VirtIOBlockDataPlane *s = container_of(e, VirtIOBlockDataPlane,
@@ -348,14 +340,6 @@ static void handle_notify(EventNotifier *e)
     }
 }
 
-static int flush_io(EventNotifier *e)
-{
-    VirtIOBlockDataPlane *s = container_of(e, VirtIOBlockDataPlane,
-                                           io_notifier);
-
-    return s->num_reqs > 0;
-}
-
 static void handle_io(EventNotifier *e)
 {
     VirtIOBlockDataPlane *s = container_of(e, VirtIOBlockDataPlane,
@@ -379,9 +363,9 @@ static void *data_plane_thread(void *opaque)
 {
     VirtIOBlockDataPlane *s = opaque;
 
-    do {
+    while (!s->stopping || s->num_reqs > 0) {
         aio_poll(s->ctx, true);
-    } while (!s->stopping || s->num_reqs > 0);
+    }
     return NULL;
 }
 
@@ -418,6 +402,14 @@ bool virtio_blk_data_plane_create(VirtIODevice *vdev, VirtIOBlkConf *blk,
         return false;
     }
 
+    /* If dataplane is (re-)enabled while the guest is running there could be
+     * block jobs that can conflict.
+     */
+    if (bdrv_in_use(blk->conf.bs)) {
+        error_report("cannot start dataplane thread while device is in use");
+        return false;
+    }
+
     fd = raw_get_aio_fd(blk->conf.bs);
     if (fd < 0) {
         error_report("drive is incompatible with x-data-plane, "
@@ -433,10 +425,6 @@ bool virtio_blk_data_plane_create(VirtIODevice *vdev, VirtIOBlkConf *blk,
     /* Prevent block operations that conflict with data plane thread */
     bdrv_set_in_use(blk->conf.bs, 1);
 
-    error_setg(&s->migration_blocker,
-            "x-data-plane does not support migration");
-    migrate_add_blocker(s->migration_blocker);
-
     *dataplane = s;
     return true;
 }
@@ -448,8 +436,6 @@ void virtio_blk_data_plane_destroy(VirtIOBlockDataPlane *s)
     }
 
     virtio_blk_data_plane_stop(s);
-    migrate_del_blocker(s->migration_blocker);
-    error_free(s->migration_blocker);
     bdrv_set_in_use(s->blk->conf.bs, 0);
     g_free(s);
 }
@@ -486,7 +472,7 @@ void virtio_blk_data_plane_start(VirtIOBlockDataPlane *s)
         exit(1);
     }
     s->host_notifier = *virtio_queue_get_host_notifier(vq);
-    aio_set_event_notifier(s->ctx, &s->host_notifier, handle_notify, flush_true);
+    aio_set_event_notifier(s->ctx, &s->host_notifier, handle_notify);
 
     /* Set up ioqueue */
     ioq_init(&s->ioqueue, s->fd, REQ_MAX);
@@ -494,7 +480,7 @@ void virtio_blk_data_plane_start(VirtIOBlockDataPlane *s)
         ioq_put_iocb(&s->ioqueue, &s->requests[i].iocb);
     }
     s->io_notifier = *ioq_get_notifier(&s->ioqueue);
-    aio_set_event_notifier(s->ctx, &s->io_notifier, handle_io, flush_io);
+    aio_set_event_notifier(s->ctx, &s->io_notifier, handle_io);
 
     s->started = true;
     trace_virtio_blk_data_plane_start(s);
@@ -526,10 +512,10 @@ void virtio_blk_data_plane_stop(VirtIOBlockDataPlane *s)
         qemu_thread_join(&s->thread);
     }
 
-    aio_set_event_notifier(s->ctx, &s->io_notifier, NULL, NULL);
+    aio_set_event_notifier(s->ctx, &s->io_notifier, NULL);
     ioq_cleanup(&s->ioqueue);
 
-    aio_set_event_notifier(s->ctx, &s->host_notifier, NULL, NULL);
+    aio_set_event_notifier(s->ctx, &s->host_notifier, NULL);
     k->set_host_notifier(qbus->parent, 0, false);
 
     aio_context_unref(s->ctx);
@@ -537,7 +523,7 @@ void virtio_blk_data_plane_stop(VirtIOBlockDataPlane *s)
     /* Clean up guest notifier (irq) */
     k->set_guest_notifiers(qbus->parent, 1, false);
 
-    vring_teardown(&s->vring);
+    vring_teardown(&s->vring, s->vdev, 0);
     s->started = false;
     s->stopping = false;
 }

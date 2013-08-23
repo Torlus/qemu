@@ -1,6 +1,5 @@
 #include "sysemu/sysemu.h"
 #include "cpu.h"
-#include "sysemu/sysemu.h"
 #include "helper_regs.h"
 #include "hw/ppc/spapr.h"
 #include "mmu-hash64.h"
@@ -116,20 +115,20 @@ static target_ulong h_enter(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     }
     ppc_hash64_store_hpte1(env, hpte, ptel);
     /* eieio();  FIXME: need some sort of barrier for smp? */
-    ppc_hash64_store_hpte0(env, hpte, pteh);
+    ppc_hash64_store_hpte0(env, hpte, pteh | HPTE64_V_HPTE_DIRTY);
 
     args[0] = pte_index + i;
     return H_SUCCESS;
 }
 
-enum {
+typedef enum {
     REMOVE_SUCCESS = 0,
     REMOVE_NOT_FOUND = 1,
     REMOVE_PARM = 2,
     REMOVE_HW = 3,
-};
+} RemoveResult;
 
-static target_ulong remove_hpte(CPUPPCState *env, target_ulong ptex,
+static RemoveResult remove_hpte(CPUPPCState *env, target_ulong ptex,
                                 target_ulong avpn,
                                 target_ulong flags,
                                 target_ulong *vp, target_ulong *rp)
@@ -153,7 +152,7 @@ static target_ulong remove_hpte(CPUPPCState *env, target_ulong ptex,
     }
     *vp = v;
     *rp = r;
-    ppc_hash64_store_hpte0(env, hpte, 0);
+    ppc_hash64_store_hpte0(env, hpte, HPTE64_V_HPTE_DIRTY);
     rb = compute_tlbie_rb(v, r, ptex);
     ppc_tlb_invalidate_one(env, rb);
     return REMOVE_SUCCESS;
@@ -166,7 +165,7 @@ static target_ulong h_remove(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     target_ulong flags = args[0];
     target_ulong pte_index = args[1];
     target_ulong avpn = args[2];
-    int ret;
+    RemoveResult ret;
 
     ret = remove_hpte(env, pte_index, avpn, flags,
                       &args[0], &args[1]);
@@ -185,7 +184,7 @@ static target_ulong h_remove(PowerPCCPU *cpu, sPAPREnvironment *spapr,
         return H_HARDWARE;
     }
 
-    assert(0);
+    g_assert_not_reached();
 }
 
 #define H_BULK_REMOVE_TYPE             0xc000000000000000ULL
@@ -283,11 +282,11 @@ static target_ulong h_protect(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     r |= (flags << 48) & HPTE64_R_KEY_HI;
     r |= flags & (HPTE64_R_PP | HPTE64_R_N | HPTE64_R_KEY_LO);
     rb = compute_tlbie_rb(v, r, pte_index);
-    ppc_hash64_store_hpte0(env, hpte, v & ~HPTE64_V_VALID);
+    ppc_hash64_store_hpte0(env, hpte, (v & ~HPTE64_V_VALID) | HPTE64_V_HPTE_DIRTY);
     ppc_tlb_invalidate_one(env, rb);
     ppc_hash64_store_hpte1(env, hpte, r);
     /* Don't need a memory barrier, due to qemu's global lock */
-    ppc_hash64_store_hpte0(env, hpte, v);
+    ppc_hash64_store_hpte0(env, hpte, v | HPTE64_V_HPTE_DIRTY);
     return H_SUCCESS;
 }
 
@@ -526,7 +525,7 @@ static target_ulong h_rtas(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     uint32_t nargs = ldl_be_phys(rtas_r3 + 4);
     uint32_t nret = ldl_be_phys(rtas_r3 + 8);
 
-    return spapr_rtas_call(spapr, token, nargs, rtas_r3 + 12,
+    return spapr_rtas_call(cpu, spapr, token, nargs, rtas_r3 + 12,
                            nret, rtas_r3 + 12 + 4*nargs);
 }
 

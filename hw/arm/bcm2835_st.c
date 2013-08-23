@@ -12,7 +12,10 @@
 
 // #define LOG_REG_ACCESS
 
-typedef struct {
+#define TYPE_BCM2835_ST "bcm2835_st"
+#define BCM2835_ST(obj) OBJECT_CHECK(bcm2835_st_state, (obj), TYPE_BCM2835_ST)
+
+typedef struct bcm2835_st_state {
     SysBusDevice busdev;
     MemoryRegion iomem;
     QEMUTimer *timer;
@@ -166,14 +169,16 @@ static const VMStateDescription vmstate_bcm2835_st = {
     }
 };
 
-static int bcm2835_st_init(SysBusDevice *dev)
+static int bcm2835_st_init(SysBusDevice *sbd)
 {
-    bcm2835_st_state *s = FROM_SYSBUS(bcm2835_st_state, dev);
+    // bcm2835_st_state *s = FROM_SYSBUS(bcm2835_st_state, dev);
     int i;
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_st_state *s = BCM2835_ST(dev);
 
     for(i = 0; i < 4; i++) {
         s->compare[i] = 0;
-        sysbus_init_irq(dev, &s->irq[i]);
+        sysbus_init_irq(sbd, &s->irq[i]);
     }
     s->match = 0;
 
@@ -181,10 +186,10 @@ static int bcm2835_st_init(SysBusDevice *dev)
     
     bcm2835_st_update(s);
 
-    memory_region_init_io(&s->iomem, &bcm2835_st_ops, s, 
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_st_ops, s, 
         "bcm2835_st", 0x1000);
-    sysbus_init_mmio(dev, &s->iomem);
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_st, s);
+    sysbus_init_mmio(sbd, &s->iomem);
+    vmstate_register(dev, -1, &vmstate_bcm2835_st, s);
 
     return 0;
 }

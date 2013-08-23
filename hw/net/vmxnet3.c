@@ -528,7 +528,7 @@ vmxnet3_setup_tx_offloads(VMXNET3State *s)
         break;
 
     default:
-        assert(false);
+        g_assert_not_reached();
         return false;
     }
 
@@ -575,7 +575,7 @@ vmxnet3_on_tx_done_update_stats(VMXNET3State *s, int qidx,
             stats->ucastBytesTxOK += tot_len;
             break;
         default:
-            assert(false);
+            g_assert_not_reached();
         }
 
         if (s->offload_mode == VMXNET3_OM_TSO) {
@@ -599,7 +599,7 @@ vmxnet3_on_tx_done_update_stats(VMXNET3State *s, int qidx,
         break;
 
     default:
-        assert(false);
+        g_assert_not_reached();
     }
 }
 
@@ -634,7 +634,7 @@ vmxnet3_on_rx_done_update_stats(VMXNET3State *s,
             stats->ucastBytesRxOK += tot_len;
             break;
         default:
-            assert(false);
+            g_assert_not_reached();
         }
 
         if (tot_len > s->mtu) {
@@ -643,7 +643,7 @@ vmxnet3_on_rx_done_update_stats(VMXNET3State *s,
         }
         break;
     default:
-        assert(false);
+        g_assert_not_reached();
     }
 }
 
@@ -1106,7 +1106,7 @@ vmxnet3_io_bar0_read(void *opaque, hwaddr addr, unsigned size)
 {
     if (VMW_IS_MULTIREG_ADDR(addr, VMXNET3_REG_IMR,
                         VMXNET3_MAX_INTRS, VMXNET3_REG_ALIGN)) {
-        assert(false);
+        g_assert_not_reached();
     }
 
     VMW_CBPRN("BAR0 unknown read [%" PRIx64 "], size %d", addr, size);
@@ -1651,7 +1651,7 @@ vmxnet3_io_bar1_write(void *opaque,
     case VMXNET3_REG_ICR:
         VMW_CBPRN("Write BAR1 [VMXNET3_REG_ICR] = %" PRIx64 ", size %d",
                   val, size);
-        assert(false);
+        g_assert_not_reached();
         break;
 
     /* Event Cause Register */
@@ -1801,7 +1801,7 @@ vmxnet3_rx_filter_may_indicate(VMXNET3State *s, const void *data,
         break;
 
     default:
-        assert(false);
+        g_assert_not_reached();
     }
 
     return true;
@@ -1892,7 +1892,7 @@ static void vmxnet3_net_uninit(VMXNET3State *s)
     vmxnet_tx_pkt_reset(s->tx_pkt);
     vmxnet_tx_pkt_uninit(s->tx_pkt);
     vmxnet_rx_pkt_uninit(s->rx_pkt);
-    qemu_del_net_client(qemu_get_queue(s->nic));
+    qemu_del_nic(s->nic);
 }
 
 static void vmxnet3_net_init(VMXNET3State *s)
@@ -2073,17 +2073,17 @@ static int vmxnet3_pci_init(PCIDevice *pci_dev)
 
     VMW_CBPRN("Starting init...");
 
-    memory_region_init_io(&s->bar0, &b0_ops, s,
+    memory_region_init_io(&s->bar0, OBJECT(s), &b0_ops, s,
                           "vmxnet3-b0", VMXNET3_PT_REG_SIZE);
     pci_register_bar(pci_dev, VMXNET3_BAR0_IDX,
                      PCI_BASE_ADDRESS_SPACE_MEMORY, &s->bar0);
 
-    memory_region_init_io(&s->bar1, &b1_ops, s,
+    memory_region_init_io(&s->bar1, OBJECT(s), &b1_ops, s,
                           "vmxnet3-b1", VMXNET3_VD_REG_SIZE);
     pci_register_bar(pci_dev, VMXNET3_BAR1_IDX,
                      PCI_BASE_ADDRESS_SPACE_MEMORY, &s->bar1);
 
-    memory_region_init(&s->msix_bar, "vmxnet3-msix-bar",
+    memory_region_init(&s->msix_bar, OBJECT(s), "vmxnet3-msix-bar",
                        VMXNET3_MSIX_BAR_SIZE);
     pci_register_bar(pci_dev, VMXNET3_MSIX_BAR_IDX,
                      PCI_BASE_ADDRESS_SPACE_MEMORY, &s->msix_bar);
@@ -2453,6 +2453,7 @@ static void vmxnet3_class_init(ObjectClass *class, void *data)
     dc->reset = vmxnet3_qdev_reset;
     dc->vmsd = &vmstate_vmxnet3;
     dc->props = vmxnet3_properties;
+    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
 }
 
 static const TypeInfo vmxnet3_info = {

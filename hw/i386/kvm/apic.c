@@ -129,7 +129,7 @@ static void do_inject_external_nmi(void *data)
     uint32_t lvt;
     int ret;
 
-    cpu_synchronize_state(&s->cpu->env);
+    cpu_synchronize_state(cpu);
 
     lvt = s->lvt[APIC_LVT_LINT1];
     if (!(lvt & APIC_LVT_MASKED) && ((lvt >> 8) & 7) == APIC_DM_NMI) {
@@ -173,7 +173,7 @@ static const MemoryRegionOps kvm_apic_io_ops = {
 
 static void kvm_apic_init(APICCommonState *s)
 {
-    memory_region_init_io(&s->io_memory, &kvm_apic_io_ops, s, "kvm-apic-msi",
+    memory_region_init_io(&s->io_memory, NULL, &kvm_apic_io_ops, s, "kvm-apic-msi",
                           APIC_SPACE_SIZE);
 
     if (kvm_has_gsi_routing()) {

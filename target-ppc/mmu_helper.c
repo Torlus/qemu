@@ -32,10 +32,10 @@
 
 #ifdef DEBUG_MMU
 #  define LOG_MMU(...) qemu_log(__VA_ARGS__)
-#  define LOG_MMU_STATE(env) log_cpu_state((env), 0)
+#  define LOG_MMU_STATE(cpu) log_cpu_state((cpu), 0)
 #else
 #  define LOG_MMU(...) do { } while (0)
-#  define LOG_MMU_STATE(...) do { } while (0)
+#  define LOG_MMU_STATE(cpu) do { } while (0)
 #endif
 
 #ifdef DEBUG_SOFTWARE_TLB
@@ -1176,6 +1176,94 @@ static void mmubooke206_dump_mmu(FILE *f, fprintf_function cpu_fprintf,
     }
 }
 
+static void mmu6xx_dump_BATs(FILE *f, fprintf_function cpu_fprintf,
+                             CPUPPCState *env, int type)
+{
+    target_ulong *BATlt, *BATut, *BATu, *BATl;
+    target_ulong BEPIl, BEPIu, bl;
+    int i;
+
+    switch (type) {
+    case ACCESS_CODE:
+        BATlt = env->IBAT[1];
+        BATut = env->IBAT[0];
+        break;
+    default:
+        BATlt = env->DBAT[1];
+        BATut = env->DBAT[0];
+        break;
+    }
+
+    for (i = 0; i < env->nb_BATs; i++) {
+        BATu = &BATut[i];
+        BATl = &BATlt[i];
+        BEPIu = *BATu & 0xF0000000;
+        BEPIl = *BATu & 0x0FFE0000;
+        bl = (*BATu & 0x00001FFC) << 15;
+        cpu_fprintf(f, "%s BAT%d BATu " TARGET_FMT_lx
+                    " BATl " TARGET_FMT_lx "\n\t" TARGET_FMT_lx " "
+                    TARGET_FMT_lx " " TARGET_FMT_lx "\n",
+                    type == ACCESS_CODE ? "code" : "data", i,
+                    *BATu, *BATl, BEPIu, BEPIl, bl);
+    }
+}
+
+static void mmu6xx_dump_mmu(FILE *f, fprintf_function cpu_fprintf,
+                            CPUPPCState *env)
+{
+    ppc6xx_tlb_t *tlb;
+    target_ulong sr;
+    int type, way, entry, i;
+
+    cpu_fprintf(f, "HTAB base = 0x%"HWADDR_PRIx"\n", env->htab_base);
+    cpu_fprintf(f, "HTAB mask = 0x%"HWADDR_PRIx"\n", env->htab_mask);
+
+    cpu_fprintf(f, "\nSegment registers:\n");
+    for (i = 0; i < 32; i++) {
+        sr = env->sr[i];
+        if (sr & 0x80000000) {
+            cpu_fprintf(f, "%02d T=%d Ks=%d Kp=%d BUID=0x%03x "
+                        "CNTLR_SPEC=0x%05x\n", i,
+                        sr & 0x80000000 ? 1 : 0, sr & 0x40000000 ? 1 : 0,
+                        sr & 0x20000000 ? 1 : 0, (uint32_t)((sr >> 20) & 0x1FF),
+                        (uint32_t)(sr & 0xFFFFF));
+        } else {
+            cpu_fprintf(f, "%02d T=%d Ks=%d Kp=%d N=%d VSID=0x%06x\n", i,
+                        sr & 0x80000000 ? 1 : 0, sr & 0x40000000 ? 1 : 0,
+                        sr & 0x20000000 ? 1 : 0, sr & 0x10000000 ? 1 : 0,
+                        (uint32_t)(sr & 0x00FFFFFF));
+        }
+    }
+
+    cpu_fprintf(f, "\nBATs:\n");
+    mmu6xx_dump_BATs(f, cpu_fprintf, env, ACCESS_INT);
+    mmu6xx_dump_BATs(f, cpu_fprintf, env, ACCESS_CODE);
+
+    if (env->id_tlbs != 1) {
+        cpu_fprintf(f, "ERROR: 6xx MMU should have separated TLB"
+                    " for code and data\n");
+    }
+
+    cpu_fprintf(f, "\nTLBs                       [EPN    EPN + SIZE]\n");
+
+    for (type = 0; type < 2; type++) {
+        for (way = 0; way < env->nb_ways; way++) {
+            for (entry = env->nb_tlb * type + env->tlb_per_way * way;
+                 entry < (env->nb_tlb * type + env->tlb_per_way * (way + 1));
+                 entry++) {
+
+                tlb = &env->tlb.tlb6[entry];
+                cpu_fprintf(f, "%s TLB %02d/%02d way:%d %s ["
+                            TARGET_FMT_lx " " TARGET_FMT_lx "]\n",
+                            type ? "code" : "data", entry % env->nb_tlb,
+                            env->nb_tlb, way,
+                            pte_is_valid(tlb->pte0) ? "valid" : "inval",
+                            tlb->EPN, tlb->EPN + TARGET_PAGE_SIZE);
+            }
+        }
+    }
+}
+
 void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUPPCState *env)
 {
     switch (env->mmu_model) {
@@ -1184,6 +1272,10 @@ void dump_mmu(FILE *f, fprintf_function cpu_fprintf, CPUPPCState *env)
         break;
     case POWERPC_MMU_BOOKE206:
         mmubooke206_dump_mmu(f, cpu_fprintf, env);
+        break;
+    case POWERPC_MMU_SOFT_6xx:
+    case POWERPC_MMU_SOFT_74xx:
+        mmu6xx_dump_mmu(f, cpu_fprintf, env);
         break;
 #if defined(TARGET_PPC64)
     case POWERPC_MMU_64B:
@@ -1317,8 +1409,10 @@ static int get_physical_address(CPUPPCState *env, mmu_ctx_t *ctx,
     return ret;
 }
 
-hwaddr cpu_get_phys_page_debug(CPUPPCState *env, target_ulong addr)
+hwaddr ppc_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
 {
+    PowerPCCPU *cpu = POWERPC_CPU(cs);
+    CPUPPCState *env = &cpu->env;
     mmu_ctx_t ctx;
 
     switch (env->mmu_model) {
@@ -1339,7 +1433,15 @@ hwaddr cpu_get_phys_page_debug(CPUPPCState *env, target_ulong addr)
     }
 
     if (unlikely(get_physical_address(env, &ctx, addr, 0, ACCESS_INT) != 0)) {
-        return -1;
+
+        /* Some MMUs have separate TLBs for code and data. If we only try an
+         * ACCESS_INT, we may not be able to read instructions mapped by code
+         * TLBs, so we also try a ACCESS_CODE.
+         */
+        if (unlikely(get_physical_address(env, &ctx, addr, 0,
+                                          ACCESS_CODE) != 0)) {
+            return -1;
+        }
     }
 
     return ctx.raddr & TARGET_PAGE_MASK;
@@ -1408,7 +1510,7 @@ static int cpu_ppc_handle_mmu_fault(CPUPPCState *env, target_ulong address,
                      mmu_idx, TARGET_PAGE_SIZE);
         ret = 0;
     } else if (ret < 0) {
-        LOG_MMU_STATE(env);
+        LOG_MMU_STATE(CPU(ppc_env_get_cpu(env)));
         if (access_type == ACCESS_CODE) {
             switch (ret) {
             case -1:
@@ -2790,7 +2892,7 @@ void helper_booke206_tlbflush(CPUPPCState *env, uint32_t type)
 void tlb_fill(CPUPPCState *env, target_ulong addr, int is_write, int mmu_idx,
               uintptr_t retaddr)
 {
-    CPUState *cpu = ENV_GET_CPU(env);
+    CPUState *cpu = CPU(ppc_env_get_cpu(env));
     PowerPCCPUClass *pcc = POWERPC_CPU_GET_CLASS(cpu);
     int ret;
 

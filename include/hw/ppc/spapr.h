@@ -7,30 +7,36 @@
 struct VIOsPAPRBus;
 struct sPAPRPHBState;
 struct sPAPRNVRAM;
-struct icp_state;
+
+#define HPTE64_V_HPTE_DIRTY     0x0000000000000040ULL
 
 typedef struct sPAPREnvironment {
     struct VIOsPAPRBus *vio_bus;
     QLIST_HEAD(, sPAPRPHBState) phbs;
     struct sPAPRNVRAM *nvram;
-    struct icp_state *icp;
+    XICSState *icp;
 
     hwaddr ram_limit;
     void *htab;
-    long htab_shift;
+    uint32_t htab_shift;
     hwaddr rma_size;
     int vrma_adjust;
     hwaddr fdt_addr, rtas_addr;
     long rtas_size;
     void *fdt_skel;
     target_ulong entry_point;
-    int next_irq;
-    int rtc_offset;
+    uint32_t next_irq;
+    uint64_t rtc_offset;
     char *cpu_model;
     bool has_graphics;
 
     uint32_t epow_irq;
     Notifier epow_notifier;
+
+    /* Migration state */
+    int htab_save_index;
+    bool htab_first_pass;
+    int htab_fd;
 } sPAPREnvironment;
 
 #define H_SUCCESS         0
@@ -319,11 +325,12 @@ static inline void rtas_st(target_ulong phys, int n, uint32_t val)
     stl_be_phys(phys + 4*n, val);
 }
 
-typedef void (*spapr_rtas_fn)(sPAPREnvironment *spapr, uint32_t token,
+typedef void (*spapr_rtas_fn)(PowerPCCPU *cpu, sPAPREnvironment *spapr,
+                              uint32_t token,
                               uint32_t nargs, target_ulong args,
                               uint32_t nret, target_ulong rets);
 int spapr_rtas_register(const char *name, spapr_rtas_fn fn);
-target_ulong spapr_rtas_call(sPAPREnvironment *spapr,
+target_ulong spapr_rtas_call(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                              uint32_t token, uint32_t nargs, target_ulong args,
                              uint32_t nret, target_ulong rets);
 int spapr_rtas_device_tree_setup(void *fdt, hwaddr rtas_addr,
@@ -333,26 +340,38 @@ int spapr_rtas_device_tree_setup(void *fdt, hwaddr rtas_addr,
 #define SPAPR_TCE_PAGE_SIZE    (1ULL << SPAPR_TCE_PAGE_SHIFT)
 #define SPAPR_TCE_PAGE_MASK    (SPAPR_TCE_PAGE_SIZE - 1)
 
-typedef struct sPAPRTCE {
-    uint64_t tce;
-} sPAPRTCE;
-
 #define SPAPR_VIO_BASE_LIOBN    0x00000000
 #define SPAPR_PCI_BASE_LIOBN    0x80000000
 
 #define RTAS_ERROR_LOG_MAX      2048
 
+typedef struct sPAPRTCETable sPAPRTCETable;
 
-void spapr_iommu_init(void);
+#define TYPE_SPAPR_TCE_TABLE "spapr-tce-table"
+#define SPAPR_TCE_TABLE(obj) \
+    OBJECT_CHECK(sPAPRTCETable, (obj), TYPE_SPAPR_TCE_TABLE)
+
+struct sPAPRTCETable {
+    DeviceState parent;
+    uint32_t liobn;
+    uint32_t window_size;
+    uint32_t nb_table;
+    uint64_t *table;
+    bool bypass;
+    int fd;
+    MemoryRegion iommu;
+    QLIST_ENTRY(sPAPRTCETable) list;
+};
+
 void spapr_events_init(sPAPREnvironment *spapr);
 void spapr_events_fdt_skel(void *fdt, uint32_t epow_irq);
-DMAContext *spapr_tce_new_dma_context(uint32_t liobn, size_t window_size);
-void spapr_tce_free(DMAContext *dma);
-void spapr_tce_reset(DMAContext *dma);
-void spapr_tce_set_bypass(DMAContext *dma, bool bypass);
+sPAPRTCETable *spapr_tce_new_table(DeviceState *owner, uint32_t liobn,
+                                   size_t window_size);
+MemoryRegion *spapr_tce_get_iommu(sPAPRTCETable *tcet);
+void spapr_tce_set_bypass(sPAPRTCETable *tcet, bool bypass);
 int spapr_dma_dt(void *fdt, int node_off, const char *propname,
                  uint32_t liobn, uint64_t window, uint32_t size);
 int spapr_tcet_dma_dt(void *fdt, int node_off, const char *propname,
-                      DMAContext *dma);
+                      sPAPRTCETable *tcet);
 
 #endif /* !defined (__HW_SPAPR_H__) */

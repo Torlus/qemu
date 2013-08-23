@@ -70,13 +70,14 @@ struct CharDriverState {
     void (*chr_set_echo)(struct CharDriverState *chr, bool echo);
     void (*chr_set_fe_open)(struct CharDriverState *chr, int fe_open);
     void *opaque;
-    int idle_tag;
     char *label;
     char *filename;
     int be_open;
     int fe_open;
     int explicit_fe_open;
+    int explicit_be_open;
     int avail_connections;
+    int is_mux;
     QemuOpts *opts;
     QTAILQ_ENTRY(CharDriverState) next;
 };
@@ -281,7 +282,7 @@ CharDriverState *qemu_chr_find(const char *name);
 QemuOpts *qemu_chr_parse_compat(const char *label, const char *filename);
 
 void register_char_driver(const char *name, CharDriverState *(*open)(QemuOpts *));
-void register_char_driver_qapi(const char *name, int kind,
+void register_char_driver_qapi(const char *name, ChardevBackendKind kind,
         void (*parse)(QemuOpts *opts, ChardevBackend *backend, Error **errp));
 
 /* add an eventfd to the qemu devices that are polled */

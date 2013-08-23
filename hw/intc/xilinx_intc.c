@@ -37,9 +37,13 @@
 #define R_MER       7
 #define R_MAX       8
 
+#define TYPE_XILINX_INTC "xlnx.xps-intc"
+#define XILINX_INTC(obj) OBJECT_CHECK(struct xlx_pic, (obj), TYPE_XILINX_INTC)
+
 struct xlx_pic
 {
-    SysBusDevice busdev;
+    SysBusDevice parent_obj;
+
     MemoryRegion mmio;
     qemu_irq parent_irq;
 
@@ -49,11 +53,19 @@ struct xlx_pic
 
     /* Runtime control registers.  */
     uint32_t regs[R_MAX];
+    /* state of the interrupt input pins */
+    uint32_t irq_pin_state;
 };
 
 static void update_irq(struct xlx_pic *p)
 {
     uint32_t i;
+
+    /* level triggered interrupt */
+    if (p->regs[R_MER] & 2) {
+        p->regs[R_ISR] |= p->irq_pin_state & ~p->c_kind_of_intr;
+    }
+
     /* Update the pending register.  */
     p->regs[R_IPR] = p->regs[R_ISR] & p->regs[R_IER];
 
@@ -66,11 +78,7 @@ static void update_irq(struct xlx_pic *p)
         i = ~0;
 
     p->regs[R_IVR] = i;
-    if ((p->regs[R_MER] & 1) && p->regs[R_IPR]) {
-        qemu_irq_raise(p->parent_irq);
-    } else {
-        qemu_irq_lower(p->parent_irq);
-    }
+    qemu_set_irq(p->parent_irq, (p->regs[R_MER] & 1) && p->regs[R_IPR]);
 }
 
 static uint64_t
@@ -112,6 +120,11 @@ pic_write(void *opaque, hwaddr addr,
         case R_CIE:
             p->regs[R_IER] &= ~value; /* Atomic clear ie.  */
             break;
+        case R_ISR:
+            if ((p->regs[R_MER] & 2)) {
+                break;
+            }
+            /* fallthrough */
         default:
             if (addr < ARRAY_SIZE(p->regs))
                 p->regs[addr] = value;
@@ -134,30 +147,27 @@ static void irq_handler(void *opaque, int irq, int level)
 {
     struct xlx_pic *p = opaque;
 
-    if (!(p->regs[R_MER] & 2)) {
-        qemu_irq_lower(p->parent_irq);
-        return;
-    }
-
-    /* Update source flops. Don't clear unless level triggered.
-       Edge triggered interrupts only go away when explicitely acked to
-       the interrupt controller.  */
-    if (!(p->c_kind_of_intr & (1 << irq)) || level) {
-        p->regs[R_ISR] &= ~(1 << irq);
+    /* edge triggered interrupt */
+    if (p->c_kind_of_intr & (1 << irq) && p->regs[R_MER] & 2) {
         p->regs[R_ISR] |= (level << irq);
     }
+
+    p->irq_pin_state &= ~(1 << irq);
+    p->irq_pin_state |= level << irq;
     update_irq(p);
 }
 
-static int xilinx_intc_init(SysBusDevice *dev)
+static int xilinx_intc_init(SysBusDevice *sbd)
 {
-    struct xlx_pic *p = FROM_SYSBUS(typeof (*p), dev);
+    DeviceState *dev = DEVICE(sbd);
+    struct xlx_pic *p = XILINX_INTC(dev);
 
-    qdev_init_gpio_in(&dev->qdev, irq_handler, 32);
-    sysbus_init_irq(dev, &p->parent_irq);
+    qdev_init_gpio_in(dev, irq_handler, 32);
+    sysbus_init_irq(sbd, &p->parent_irq);
 
-    memory_region_init_io(&p->mmio, &pic_ops, p, "xlnx.xps-intc", R_MAX * 4);
-    sysbus_init_mmio(dev, &p->mmio);
+    memory_region_init_io(&p->mmio, OBJECT(p), &pic_ops, p, "xlnx.xps-intc",
+                          R_MAX * 4);
+    sysbus_init_mmio(sbd, &p->mmio);
     return 0;
 }
 
@@ -176,7 +186,7 @@ static void xilinx_intc_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo xilinx_intc_info = {
-    .name          = "xlnx.xps-intc",
+    .name          = TYPE_XILINX_INTC,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(struct xlx_pic),
     .class_init    = xilinx_intc_class_init,

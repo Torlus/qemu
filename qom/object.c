@@ -51,6 +51,7 @@ struct TypeImpl
     void *class_data;
 
     void (*instance_init)(Object *obj);
+    void (*instance_post_init)(Object *obj);
     void (*instance_finalize)(Object *obj);
 
     bool abstract;
@@ -111,6 +112,7 @@ static TypeImpl *type_register_internal(const TypeInfo *info)
     ti->class_data = info->class_data;
 
     ti->instance_init = info->instance_init;
+    ti->instance_post_init = info->instance_post_init;
     ti->instance_finalize = info->instance_finalize;
 
     ti->abstract = info->abstract;
@@ -298,6 +300,17 @@ static void object_init_with_type(Object *obj, TypeImpl *ti)
     }
 }
 
+static void object_post_init_with_type(Object *obj, TypeImpl *ti)
+{
+    if (ti->instance_post_init) {
+        ti->instance_post_init(obj);
+    }
+
+    if (type_has_parent(ti)) {
+        object_post_init_with_type(obj, type_get_parent(ti));
+    }
+}
+
 void object_initialize_with_type(void *data, TypeImpl *type)
 {
     Object *obj = data;
@@ -313,6 +326,7 @@ void object_initialize_with_type(void *data, TypeImpl *type)
     object_ref(obj);
     QTAILQ_INIT(&obj->properties);
     object_init_with_type(obj, type);
+    object_post_init_with_type(obj, type);
 }
 
 void object_initialize(void *data, const char *typename)
@@ -442,7 +456,7 @@ Object *object_dynamic_cast_assert(Object *obj, const char *typename,
     int i;
     Object *inst;
 
-    for (i = 0; i < OBJECT_CLASS_CAST_CACHE; i++) {
+    for (i = 0; obj && i < OBJECT_CLASS_CAST_CACHE; i++) {
         if (obj->class->cast_cache[i] == typename) {
             goto out;
         }
@@ -458,7 +472,7 @@ Object *object_dynamic_cast_assert(Object *obj, const char *typename,
 
     assert(obj == inst);
 
-    if (obj == inst) {
+    if (obj && obj == inst) {
         for (i = 1; i < OBJECT_CLASS_CAST_CACHE; i++) {
             obj->class->cast_cache[i - 1] = obj->class->cast_cache[i];
         }
@@ -531,14 +545,14 @@ ObjectClass *object_class_dynamic_cast_assert(ObjectClass *class,
 #ifdef CONFIG_QOM_CAST_DEBUG
     int i;
 
-    for (i = 0; i < OBJECT_CLASS_CAST_CACHE; i++) {
+    for (i = 0; class && i < OBJECT_CLASS_CAST_CACHE; i++) {
         if (class->cast_cache[i] == typename) {
             ret = class;
             goto out;
         }
     }
 #else
-    if (!class->interfaces) {
+    if (!class || !class->interfaces) {
         return class;
     }
 #endif
@@ -551,7 +565,7 @@ ObjectClass *object_class_dynamic_cast_assert(ObjectClass *class,
     }
 
 #ifdef CONFIG_QOM_CAST_DEBUG
-    if (ret == class) {
+    if (class && ret == class) {
         for (i = 1; i < OBJECT_CLASS_CAST_CACHE; i++) {
             class->cast_cache[i - 1] = class->cast_cache[i];
         }
@@ -683,16 +697,15 @@ GSList *object_class_get_list(const char *implements_type,
 
 void object_ref(Object *obj)
 {
-    obj->ref++;
+     atomic_inc(&obj->ref);
 }
 
 void object_unref(Object *obj)
 {
     g_assert(obj->ref > 0);
-    obj->ref--;
 
     /* parent always holds a reference to its children */
-    if (obj->ref == 0) {
+    if (atomic_fetch_dec(&obj->ref) == 1) {
         object_finalize(obj);
     }
 }

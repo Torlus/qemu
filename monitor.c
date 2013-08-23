@@ -63,7 +63,6 @@
 #ifdef CONFIG_TRACE_SIMPLE
 #include "trace/simple.h"
 #endif
-#include "ui/qemu-spice.h"
 #include "exec/memory.h"
 #include "qmp-commands.h"
 #include "hmp.h"
@@ -94,10 +93,10 @@
  * 'M'          Non-negative target long (32 or 64 bit), in user mode the
  *              value is multiplied by 2^20 (think Mebibyte)
  * 'o'          octets (aka bytes)
- *              user mode accepts an optional T, t, G, g, M, m, K, k
- *              suffix, which multiplies the value by 2^40 for
- *              suffixes T and t, 2^30 for suffixes G and g, 2^20 for
- *              M and m, 2^10 for K and k
+ *              user mode accepts an optional E, e, P, p, T, t, G, g, M, m,
+ *              K, k suffix, which multiplies the value by 2^60 for suffixes E
+ *              and e, 2^50 for suffixes P and p, 2^40 for suffixes T and t,
+ *              2^30 for suffixes G and g, 2^20 for M and m, 2^10 for K and k
  * 'T'          double
  *              user mode accepts an optional ms, us, ns suffix,
  *              which divides the value by 1e3, 1e6, 1e9, respectively
@@ -190,9 +189,10 @@ struct Monitor {
     int suspend_cnt;
     bool skip_flush;
     QString *outbuf;
+    guint watch;
     ReadLineState *rs;
     MonitorControl *mc;
-    CPUArchState *mon_cpu;
+    CPUState *mon_cpu;
     BlockDriverCompletionFunc *password_completion_cb;
     void *password_opaque;
     QError *error;
@@ -264,7 +264,10 @@ int monitor_read_password(Monitor *mon, ReadLineFunc *readline_func,
 static gboolean monitor_unblocked(GIOChannel *chan, GIOCondition cond,
                                   void *opaque)
 {
-    monitor_flush(opaque);
+    Monitor *mon = opaque;
+
+    mon->watch = 0;
+    monitor_flush(mon);
     return FALSE;
 }
 
@@ -281,7 +284,7 @@ void monitor_flush(Monitor *mon)
     buf = qstring_get_str(mon->outbuf);
     len = qstring_get_length(mon->outbuf);
 
-    if (mon && len && !mon->mux_out) {
+    if (len && !mon->mux_out) {
         rc = qemu_chr_fe_write(mon->chr, (const uint8_t *) buf, len);
         if (rc == len) {
             /* all flushed */
@@ -295,7 +298,10 @@ void monitor_flush(Monitor *mon)
             QDECREF(mon->outbuf);
             mon->outbuf = tmp;
         }
-        qemu_chr_fe_add_watch(mon->chr, G_IO_OUT, monitor_unblocked, mon);
+        if (mon->watch == 0) {
+            mon->watch = qemu_chr_fe_add_watch(mon->chr, G_IO_OUT,
+                                               monitor_unblocked, mon);
+        }
     }
 }
 
@@ -491,6 +497,7 @@ static const char *monitor_event_names[] = {
     [QEVENT_BLOCK_JOB_READY] = "BLOCK_JOB_READY",
     [QEVENT_DEVICE_DELETED] = "DEVICE_DELETED",
     [QEVENT_DEVICE_TRAY_MOVED] = "DEVICE_TRAY_MOVED",
+    [QEVENT_NIC_RX_FILTER_CHANGED] = "NIC_RX_FILTER_CHANGED",
     [QEVENT_SUSPEND] = "SUSPEND",
     [QEVENT_SUSPEND_DISK] = "SUSPEND_DISK",
     [QEVENT_WAKEUP] = "WAKEUP",
@@ -901,7 +908,7 @@ int monitor_set_cpu(int cpu_index)
     if (cpu == NULL) {
         return -1;
     }
-    cur_mon->mon_cpu = cpu->env_ptr;
+    cur_mon->mon_cpu = cpu;
     return 0;
 }
 
@@ -911,7 +918,7 @@ static CPUArchState *mon_get_cpu(void)
         monitor_set_cpu(0);
     }
     cpu_synchronize_state(cur_mon->mon_cpu);
-    return cur_mon->mon_cpu;
+    return cur_mon->mon_cpu->env_ptr;
 }
 
 int monitor_get_cpu_index(void)
@@ -922,9 +929,11 @@ int monitor_get_cpu_index(void)
 
 static void do_info_registers(Monitor *mon, const QDict *qdict)
 {
+    CPUState *cpu;
     CPUArchState *env;
     env = mon_get_cpu();
-    cpu_dump_state(env, (FILE *)mon, monitor_fprintf, CPU_DUMP_FPU);
+    cpu = ENV_GET_CPU(env);
+    cpu_dump_state(cpu, (FILE *)mon, monitor_fprintf, CPU_DUMP_FPU);
 }
 
 static void do_info_jit(Monitor *mon, const QDict *qdict)
@@ -949,16 +958,15 @@ static void do_info_history(Monitor *mon, const QDict *qdict)
     }
 }
 
-#if defined(TARGET_PPC)
-/* XXX: not implemented in other targets */
 static void do_info_cpu_stats(Monitor *mon, const QDict *qdict)
 {
+    CPUState *cpu;
     CPUArchState *env;
 
     env = mon_get_cpu();
-    cpu_dump_statistics(env, (FILE *)mon, &monitor_fprintf, 0);
+    cpu = ENV_GET_CPU(env);
+    cpu_dump_statistics(cpu, (FILE *)mon, &monitor_fprintf, 0);
 }
-#endif
 
 static void do_trace_print_events(Monitor *mon, const QDict *qdict)
 {
@@ -1156,7 +1164,7 @@ static void memory_dump(Monitor *mon, int count, int format, int wsize,
             cpu_physical_memory_read(addr, buf, l);
         } else {
             env = mon_get_cpu();
-            if (cpu_memory_rw_debug(env, addr, buf, l, 0) < 0) {
+            if (cpu_memory_rw_debug(ENV_GET_CPU(env), addr, buf, l, 0) < 0) {
                 monitor_printf(mon, " Cannot access memory\n");
                 break;
             }
@@ -1806,14 +1814,12 @@ static void do_info_mtree(Monitor *mon, const QDict *qdict)
 static void do_info_numa(Monitor *mon, const QDict *qdict)
 {
     int i;
-    CPUArchState *env;
     CPUState *cpu;
 
     monitor_printf(mon, "%d nodes\n", nb_numa_nodes);
     for (i = 0; i < nb_numa_nodes; i++) {
         monitor_printf(mon, "node %d cpus:", i);
-        for (env = first_cpu; env != NULL; env = env->next_cpu) {
-            cpu = ENV_GET_CPU(env);
+        for (cpu = first_cpu; cpu != NULL; cpu = cpu->next_cpu) {
             if (cpu->numa_node == i) {
                 monitor_printf(mon, " %d", cpu->cpu_index);
             }
@@ -2014,7 +2020,6 @@ static void do_acl_remove(Monitor *mon, const QDict *qdict)
 static void do_inject_mce(Monitor *mon, const QDict *qdict)
 {
     X86CPU *cpu;
-    CPUX86State *cenv;
     CPUState *cs;
     int cpu_index = qdict_get_int(qdict, "cpu_index");
     int bank = qdict_get_int(qdict, "bank");
@@ -2027,14 +2032,11 @@ static void do_inject_mce(Monitor *mon, const QDict *qdict)
     if (qdict_get_try_bool(qdict, "broadcast", 0)) {
         flags |= MCE_INJECT_BROADCAST;
     }
-    for (cenv = first_cpu; cenv != NULL; cenv = cenv->next_cpu) {
-        cpu = x86_env_get_cpu(cenv);
-        cs = CPU(cpu);
-        if (cs->cpu_index == cpu_index) {
-            cpu_x86_inject_mce(mon, cpu, bank, status, mcg_status, addr, misc,
-                               flags);
-            break;
-        }
+    cs = qemu_get_cpu(cpu_index);
+    if (cs != NULL) {
+        cpu = X86_CPU(cs);
+        cpu_x86_inject_mce(mon, cpu, bank, status, mcg_status, addr, misc,
+                           flags);
     }
 }
 #endif
@@ -2473,9 +2475,10 @@ static mon_cmd_t info_cmds[] = {
     },
     {
         .name       = "block",
-        .args_type  = "",
-        .params     = "",
-        .help       = "show the block devices",
+        .args_type  = "verbose:-v,device:B?",
+        .params     = "[-v] [device]",
+        .help       = "show info of one block device or all block devices "
+                      "(and details of images with -v option)",
         .mhandler.cmd = hmp_info_block,
     },
     {
@@ -2682,7 +2685,6 @@ static mon_cmd_t info_cmds[] = {
         .help       = "show the current VM UUID",
         .mhandler.cmd = hmp_info_uuid,
     },
-#if defined(TARGET_PPC)
     {
         .name       = "cpustats",
         .args_type  = "",
@@ -2690,7 +2692,6 @@ static mon_cmd_t info_cmds[] = {
         .help       = "show CPU statistics",
         .mhandler.cmd = do_info_cpu_stats,
     },
-#endif
 #if defined(CONFIG_SLIRP)
     {
         .name       = "usernet",
@@ -3170,9 +3171,13 @@ static const MonitorDef monitor_defs[] = {
     { NULL },
 };
 
-static void expr_error(Monitor *mon, const char *msg)
+static void expr_error(Monitor *mon, const char *fmt, ...)
 {
-    monitor_printf(mon, "%s\n", msg);
+    va_list ap;
+    va_start(ap, fmt);
+    monitor_vprintf(mon, fmt, ap);
+    monitor_printf(mon, "\n");
+    va_end(ap);
     siglongjmp(expr_env, 1);
 }
 
@@ -3290,7 +3295,7 @@ static int64_t expr_unary(Monitor *mon)
             expr_error(mon, "number too large");
         }
         if (pch == p) {
-            expr_error(mon, "invalid char in expression");
+            expr_error(mon, "invalid char '%c' in expression", *p);
         }
         pch = p;
         while (qemu_isspace(*pch))

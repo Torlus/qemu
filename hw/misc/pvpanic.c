@@ -86,32 +86,35 @@ static const MemoryRegionOps pvpanic_ops = {
     },
 };
 
-static int pvpanic_isa_initfn(ISADevice *dev)
+static void pvpanic_isa_initfn(Object *obj)
 {
-    PVPanicState *s = ISA_PVPANIC_DEVICE(dev);
-    static bool port_configured;
-    void *fw_cfg;
+    PVPanicState *s = ISA_PVPANIC_DEVICE(obj);
 
-    memory_region_init_io(&s->io, &pvpanic_ops, s, "pvpanic", 1);
-    isa_register_ioport(dev, &s->io, s->ioport);
-
-    if (!port_configured) {
-        fw_cfg = object_resolve_path("/machine/fw_cfg", NULL);
-        if (fw_cfg) {
-            fw_cfg_add_file(fw_cfg, "etc/pvpanic-port",
-                            g_memdup(&s->ioport, sizeof(s->ioport)),
-                            sizeof(s->ioport));
-            port_configured = true;
-        }
-    }
-
-    return 0;
+    memory_region_init_io(&s->io, OBJECT(s), &pvpanic_ops, s, "pvpanic", 1);
 }
 
-int pvpanic_init(ISABus *bus)
+static void pvpanic_isa_realizefn(DeviceState *dev, Error **errp)
+{
+    ISADevice *d = ISA_DEVICE(dev);
+    PVPanicState *s = ISA_PVPANIC_DEVICE(dev);
+    FWCfgState *fw_cfg = fw_cfg_find();
+    uint16_t *pvpanic_port;
+
+    if (!fw_cfg) {
+        return;
+    }
+
+    pvpanic_port = g_malloc(sizeof(*pvpanic_port));
+    *pvpanic_port = cpu_to_le16(s->ioport);
+    fw_cfg_add_file(fw_cfg, "etc/pvpanic-port", pvpanic_port,
+                    sizeof(*pvpanic_port));
+
+    isa_register_ioport(d, &s->io, s->ioport);
+}
+
+void pvpanic_init(ISABus *bus)
 {
     isa_create_simple(bus, TYPE_ISA_PVPANIC_DEVICE);
-    return 0;
 }
 
 static Property pvpanic_isa_properties[] = {
@@ -122,17 +125,17 @@ static Property pvpanic_isa_properties[] = {
 static void pvpanic_isa_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    ISADeviceClass *ic = ISA_DEVICE_CLASS(klass);
 
-    ic->init = pvpanic_isa_initfn;
-    dc->no_user = 1;
+    dc->realize = pvpanic_isa_realizefn;
     dc->props = pvpanic_isa_properties;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }
 
 static TypeInfo pvpanic_isa_info = {
     .name          = TYPE_ISA_PVPANIC_DEVICE,
     .parent        = TYPE_ISA_DEVICE,
     .instance_size = sizeof(PVPanicState),
+    .instance_init = pvpanic_isa_initfn,
     .class_init    = pvpanic_isa_class_init,
 };
 

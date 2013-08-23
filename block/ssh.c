@@ -716,6 +716,21 @@ static void ssh_close(BlockDriverState *bs)
     ssh_state_free(s);
 }
 
+static int ssh_has_zero_init(BlockDriverState *bs)
+{
+    BDRVSSHState *s = bs->opaque;
+    /* Assume false, unless we can positively prove it's true. */
+    int has_zero_init = 0;
+
+    if (s->attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) {
+        if (s->attrs.permissions & LIBSSH2_SFTP_S_IFREG) {
+            has_zero_init = 1;
+        }
+    }
+
+    return has_zero_init;
+}
+
 static void restart_coroutine(void *opaque)
 {
     Coroutine *co = opaque;
@@ -723,14 +738,6 @@ static void restart_coroutine(void *opaque)
     DPRINTF("co=%p", co);
 
     qemu_coroutine_enter(co, NULL);
-}
-
-/* Always true because when we have called set_fd_handler there is
- * always a request being processed.
- */
-static int return_true(void *opaque)
-{
-    return 1;
 }
 
 static coroutine_fn void set_fd_handler(BDRVSSHState *s)
@@ -751,13 +758,13 @@ static coroutine_fn void set_fd_handler(BDRVSSHState *s)
     DPRINTF("s->sock=%d rd_handler=%p wr_handler=%p", s->sock,
             rd_handler, wr_handler);
 
-    qemu_aio_set_fd_handler(s->sock, rd_handler, wr_handler, return_true, co);
+    qemu_aio_set_fd_handler(s->sock, rd_handler, wr_handler, co);
 }
 
 static coroutine_fn void clear_fd_handler(BDRVSSHState *s)
 {
     DPRINTF("s->sock=%d", s->sock);
-    qemu_aio_set_fd_handler(s->sock, NULL, NULL, NULL, NULL);
+    qemu_aio_set_fd_handler(s->sock, NULL, NULL, NULL);
 }
 
 /* A non-blocking call returned EAGAIN, so yield, ensuring the
@@ -1037,6 +1044,7 @@ static BlockDriver bdrv_ssh = {
     .bdrv_file_open               = ssh_file_open,
     .bdrv_create                  = ssh_create,
     .bdrv_close                   = ssh_close,
+    .bdrv_has_zero_init           = ssh_has_zero_init,
     .bdrv_co_readv                = ssh_co_readv,
     .bdrv_co_writev               = ssh_co_writev,
     .bdrv_getlength               = ssh_getlength,

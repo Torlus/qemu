@@ -1035,7 +1035,7 @@ static int es1370_initfn (PCIDevice *dev)
     c[PCI_MIN_GNT] = 0x0c;
     c[PCI_MAX_LAT] = 0x80;
 
-    memory_region_init_io (&s->io, &es1370_io_ops, s, "es1370", 256);
+    memory_region_init_io (&s->io, OBJECT(s), &es1370_io_ops, s, "es1370", 256);
     pci_register_bar (&s->dev, 0, PCI_BASE_ADDRESS_SPACE_IO, &s->io);
     qemu_register_reset (es1370_on_reset, s);
 
@@ -1069,6 +1069,7 @@ static void es1370_class_init (ObjectClass *klass, void *data)
     k->class_id = PCI_CLASS_MULTIMEDIA_AUDIO;
     k->subsystem_vendor_id = 0x4942;
     k->subsystem_id = 0x4c4c;
+    set_bit(DEVICE_CATEGORY_SOUND, dc->categories);
     dc->desc = "ENSONIQ AudioPCI ES1370";
     dc->vmsd = &vmstate_es1370;
 }

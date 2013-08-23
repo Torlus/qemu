@@ -9,6 +9,9 @@
 
 #include "bcm2835_common.h"
 
+#define TYPE_BCM2835_SBM "bcm2835_sbm"
+#define BCM2835_SBM(obj) OBJECT_CHECK(bcm2835_sbm_state, (obj), TYPE_BCM2835_SBM)
+
 typedef struct {
     uint32_t reg[MBOX_SIZE];
     int count;
@@ -236,11 +239,13 @@ static const VMStateDescription vmstate_bcm2835_sbm = {
     }
 };
 
-static int bcm2835_sbm_init(SysBusDevice *dev)
+static int bcm2835_sbm_init(SysBusDevice *sbd)
 {
-    bcm2835_sbm_state *s = FROM_SYSBUS(bcm2835_sbm_state, dev);
+    // bcm2835_sbm_state *s = FROM_SYSBUS(bcm2835_sbm_state, dev);
     int n;
-    
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_sbm_state *s = BCM2835_SBM(dev);
+
     mbox_init(&s->mbox[0]);
     mbox_init(&s->mbox[1]);
     s->mbox_irq_disabled = 0;
@@ -248,13 +253,13 @@ static int bcm2835_sbm_init(SysBusDevice *dev)
         s->available[n] = 0;
     }
     
-    sysbus_init_irq(dev, &s->arm_irq);
-    qdev_init_gpio_in(&dev->qdev, bcm2835_sbm_set_irq, MBOX_CHAN_COUNT);
+    sysbus_init_irq(sbd, &s->arm_irq);
+    qdev_init_gpio_in(dev, bcm2835_sbm_set_irq, MBOX_CHAN_COUNT);
 
-    memory_region_init_io(&s->iomem, &bcm2835_sbm_ops, s, 
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_sbm_ops, s, 
         "bcm2835_sbm", 0x400);
-    sysbus_init_mmio(dev, &s->iomem);
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_sbm, s);
+    sysbus_init_mmio(sbd, &s->iomem);
+    vmstate_register(dev, -1, &vmstate_bcm2835_sbm, s);
 
     return 0;
 }

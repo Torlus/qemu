@@ -23,6 +23,8 @@ check-unit-y += tests/test-string-input-visitor$(EXESUF)
 gcov-files-test-string-input-visitor-y = qapi/string-input-visitor.c
 check-unit-y += tests/test-string-output-visitor$(EXESUF)
 gcov-files-test-string-output-visitor-y = qapi/string-output-visitor.c
+check-unit-y += tests/test-opts-visitor$(EXESUF)
+gcov-files-test-opts-visitor-y = qapi/opts-visitor.c
 check-unit-y += tests/test-coroutine$(EXESUF)
 gcov-files-test-coroutine-y = coroutine-$(CONFIG_COROUTINE_BACKEND).c
 check-unit-y += tests/test-visitor-serialization$(EXESUF)
@@ -44,28 +46,53 @@ check-unit-y += tests/test-cutils$(EXESUF)
 gcov-files-test-cutils-y += util/cutils.c
 check-unit-y += tests/test-mul64$(EXESUF)
 gcov-files-test-mul64-y = util/host-utils.c
+check-unit-y += tests/test-int128$(EXESUF)
+# all code tested by test-int128 is inside int128.h
+gcov-files-test-int128-y =
+check-unit-y += tests/test-bitops$(EXESUF)
+check-unit-y += tests/test-qdev-global-props$(EXESUF)
 
 check-block-$(CONFIG_POSIX) += tests/qemu-iotests-quick.sh
 
 # All QTests for now are POSIX-only, but the dependencies are
 # really in libqtest, not in the testcases themselves.
-check-qtest-i386-y = tests/fdc-test$(EXESUF)
+check-qtest-i386-y = tests/endianness-test$(EXESUF)
+check-qtest-i386-y += tests/fdc-test$(EXESUF)
 gcov-files-i386-y = hw/fdc.c
 check-qtest-i386-y += tests/ide-test$(EXESUF)
 check-qtest-i386-y += tests/hd-geo-test$(EXESUF)
 gcov-files-i386-y += hw/hd-geometry.c
+check-qtest-i386-y += tests/boot-order-test$(EXESUF)
 check-qtest-i386-y += tests/rtc-test$(EXESUF)
 check-qtest-i386-y += tests/i440fx-test$(EXESUF)
 check-qtest-i386-y += tests/fw_cfg-test$(EXESUF)
 check-qtest-x86_64-y = $(check-qtest-i386-y)
 gcov-files-i386-y += i386-softmmu/hw/mc146818rtc.c
 gcov-files-x86_64-y = $(subst i386-softmmu/,x86_64-softmmu/,$(gcov-files-i386-y))
+check-qtest-mips-y = tests/endianness-test$(EXESUF)
+check-qtest-mips64-y = tests/endianness-test$(EXESUF)
+check-qtest-mips64el-y = tests/endianness-test$(EXESUF)
+check-qtest-ppc-y = tests/endianness-test$(EXESUF)
+check-qtest-ppc64-y = tests/endianness-test$(EXESUF)
+check-qtest-sh4-y = tests/endianness-test$(EXESUF)
+check-qtest-sh4eb-y = tests/endianness-test$(EXESUF)
+check-qtest-sparc64-y = tests/endianness-test$(EXESUF)
 #check-qtest-sparc-y = tests/m48t59-test$(EXESUF)
-#check-qtest-sparc64-y = tests/m48t59-test$(EXESUF)
+#check-qtest-sparc64-y += tests/m48t59-test$(EXESUF)
 gcov-files-sparc-y += hw/m48t59.c
 gcov-files-sparc64-y += hw/m48t59.c
 check-qtest-arm-y = tests/tmp105-test$(EXESUF)
 gcov-files-arm-y += hw/tmp105.c
+check-qtest-ppc-y += tests/boot-order-test$(EXESUF)
+check-qtest-ppc64-y += tests/boot-order-test$(EXESUF)
+
+check-qapi-schema-y := $(addprefix tests/qapi-schema/, \
+        comments.json empty.json funny-char.json indented-expr.json \
+        missing-colon.json missing-comma-list.json \
+        missing-comma-object.json non-objects.json \
+        qapi-schema-test.json quoted-structural-chars.json \
+        trailing-comma-list.json trailing-comma-object.json \
+        unclosed-list.json unclosed-object.json unclosed-string.json)
 
 GENERATED_HEADERS += tests/test-qapi-types.h tests/test-qapi-visit.h tests/test-qmp-commands.h
 
@@ -75,7 +102,8 @@ test-obj-y = tests/check-qint.o tests/check-qstring.o tests/check-qdict.o \
 	tests/test-string-input-visitor.o tests/test-qmp-output-visitor.o \
 	tests/test-qmp-input-visitor.o tests/test-qmp-input-strict.o \
 	tests/test-qmp-commands.o tests/test-visitor-serialization.o \
-	tests/test-x86-cpuid.o tests/test-mul64.o
+	tests/test-x86-cpuid.o tests/test-mul64.o tests/test-int128.o \
+	tests/test-opts-visitor.o
 
 test-qapi-obj-y = tests/test-qapi-visit.o tests/test-qapi-types.o
 
@@ -98,15 +126,22 @@ tests/test-hbitmap$(EXESUF): tests/test-hbitmap.o libqemuutil.a libqemustub.a
 tests/test-x86-cpuid$(EXESUF): tests/test-x86-cpuid.o
 tests/test-xbzrle$(EXESUF): tests/test-xbzrle.o xbzrle.o page_cache.o libqemuutil.a
 tests/test-cutils$(EXESUF): tests/test-cutils.o util/cutils.o
+tests/test-int128$(EXESUF): tests/test-int128.o
+tests/test-qdev-global-props$(EXESUF): tests/test-qdev-global-props.o \
+	hw/core/qdev.o hw/core/qdev-properties.o \
+	hw/core/irq.o \
+	qom/object.o qom/container.o qom/qom-qobject.o \
+	$(test-qapi-obj-y) \
+	libqemuutil.a libqemustub.a
 
 tests/test-qapi-types.c tests/test-qapi-types.h :\
-$(SRC_PATH)/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-types.py
+$(SRC_PATH)/tests/qapi-schema/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-types.py
 	$(call quiet-command,$(PYTHON) $(SRC_PATH)/scripts/qapi-types.py $(gen-out-type) -o tests -p "test-" < $<, "  GEN   $@")
 tests/test-qapi-visit.c tests/test-qapi-visit.h :\
-$(SRC_PATH)/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-visit.py
+$(SRC_PATH)/tests/qapi-schema/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-visit.py
 	$(call quiet-command,$(PYTHON) $(SRC_PATH)/scripts/qapi-visit.py $(gen-out-type) -o tests -p "test-" < $<, "  GEN   $@")
 tests/test-qmp-commands.h tests/test-qmp-marshal.c :\
-$(SRC_PATH)/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-commands.py
+$(SRC_PATH)/tests/qapi-schema/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-commands.py
 	$(call quiet-command,$(PYTHON) $(SRC_PATH)/scripts/qapi-commands.py $(gen-out-type) -o tests -p "test-" < $<, "  GEN   $@")
 
 tests/test-string-output-visitor$(EXESUF): tests/test-string-output-visitor.o $(test-qapi-obj-y) libqemuutil.a libqemustub.a
@@ -116,20 +151,24 @@ tests/test-qmp-input-visitor$(EXESUF): tests/test-qmp-input-visitor.o $(test-qap
 tests/test-qmp-input-strict$(EXESUF): tests/test-qmp-input-strict.o $(test-qapi-obj-y) libqemuutil.a libqemustub.a
 tests/test-qmp-commands$(EXESUF): tests/test-qmp-commands.o tests/test-qmp-marshal.o $(test-qapi-obj-y) qapi-types.o qapi-visit.o libqemuutil.a libqemustub.a
 tests/test-visitor-serialization$(EXESUF): tests/test-visitor-serialization.o $(test-qapi-obj-y) libqemuutil.a libqemustub.a
+tests/test-opts-visitor$(EXESUF): tests/test-opts-visitor.o $(test-qapi-obj-y) libqemuutil.a libqemustub.a
 
 tests/test-mul64$(EXESUF): tests/test-mul64.o libqemuutil.a
+tests/test-bitops$(EXESUF): tests/test-bitops.o libqemuutil.a
 
 libqos-obj-y = tests/libqos/pci.o tests/libqos/fw_cfg.o
 libqos-obj-y += tests/libqos/i2c.o
-libqos-pc-obj-y = $(libqos-obj-y) tests/libqos/pci-pc.o tests/libqos/fw_cfg-pc.o
+libqos-pc-obj-y = $(libqos-obj-y) tests/libqos/pci-pc.o
 libqos-pc-obj-y += tests/libqos/malloc-pc.o
 libqos-omap-obj-y = $(libqos-obj-y) tests/libqos/i2c-omap.o
 
 tests/rtc-test$(EXESUF): tests/rtc-test.o
 tests/m48t59-test$(EXESUF): tests/m48t59-test.o
+tests/endianness-test$(EXESUF): tests/endianness-test.o
 tests/fdc-test$(EXESUF): tests/fdc-test.o
 tests/ide-test$(EXESUF): tests/ide-test.o $(libqos-pc-obj-y)
 tests/hd-geo-test$(EXESUF): tests/hd-geo-test.o
+tests/boot-order-test$(EXESUF): tests/boot-order-test.o $(libqos-obj-y)
 tests/tmp105-test$(EXESUF): tests/tmp105-test.o $(libqos-omap-obj-y)
 tests/i440fx-test$(EXESUF): tests/i440fx-test.o $(libqos-pc-obj-y)
 tests/fw_cfg-test$(EXESUF): tests/fw_cfg-test.o $(libqos-pc-obj-y)
@@ -151,6 +190,7 @@ check-help:
 	@echo " make check-qtest-TARGET   Run qtest tests for given target"
 	@echo " make check-qtest          Run qtest tests"
 	@echo " make check-unit           Run qobject tests"
+	@echo " make check-qapi-schema    Run QAPI schema tests"
 	@echo " make check-block          Run block tests"
 	@echo " make check-report.html    Generates an HTML test report"
 	@echo
@@ -171,6 +211,7 @@ GCOV_OPTIONS = -n $(if $(V),-f,)
 $(patsubst %, check-qtest-%, $(QTEST_TARGETS)): check-qtest-%: $(check-qtest-y)
 	$(if $(CONFIG_GCOV),@rm -f *.gcda */*.gcda */*/*.gcda */*/*/*.gcda,)
 	$(call quiet-command,QTEST_QEMU_BINARY=$*-softmmu/qemu-system-$* \
+		MALLOC_PERTURB_=$${MALLOC_PERTURB_:-$$((RANDOM % 255 + 1))} \
 		gtester $(GTESTER_OPTIONS) -m=$(SPEED) $(check-qtest-$*-y),"GTESTER $@")
 	$(if $(CONFIG_GCOV),@for f in $(gcov-files-$*-y); do \
 	  echo Gcov report for $$f:;\
@@ -180,7 +221,9 @@ $(patsubst %, check-qtest-%, $(QTEST_TARGETS)): check-qtest-%: $(check-qtest-y)
 .PHONY: $(patsubst %, check-%, $(check-unit-y))
 $(patsubst %, check-%, $(check-unit-y)): check-%: %
 	$(if $(CONFIG_GCOV),@rm -f *.gcda */*.gcda */*/*.gcda */*/*/*.gcda,)
-	$(call quiet-command,gtester $(GTESTER_OPTIONS) -m=$(SPEED) $*,"GTESTER $*")
+	$(call quiet-command, \
+		MALLOC_PERTURB_=$${MALLOC_PERTURB_:-$$((RANDOM % 255 + 1))} \
+		gtester $(GTESTER_OPTIONS) -m=$(SPEED) $*,"GTESTER $*")
 	$(if $(CONFIG_GCOV),@for f in $(gcov-files-$(subst tests/,,$*)-y); do \
 	  echo Gcov report for $$f:;\
 	  $(GCOV) $(GCOV_OPTIONS) $$f -o `dirname $$f`; \
@@ -210,12 +253,24 @@ check-report.html: check-report.xml
 check-tests/qemu-iotests-quick.sh: tests/qemu-iotests-quick.sh qemu-img$(EXESUF) qemu-io$(EXESUF)
 	$<
 
+.PHONY: check-tests/test-qapi.py
+check-tests/test-qapi.py: tests/test-qapi.py
+
+.PHONY: $(patsubst %, check-%, $(check-qapi-schema-y))
+$(patsubst %, check-%, $(check-qapi-schema-y)): check-%.json: $(SRC_PATH)/%.json
+	$(call quiet-command, PYTHONPATH=$(SRC_PATH)/scripts $(PYTHON) $(SRC_PATH)/tests/qapi-schema/test-qapi.py <$^ >$*.out 2>$*.err; echo $$? >$*.exit, "  TEST  $*.out")
+	@diff -q $(SRC_PATH)/$*.out $*.out
+	@diff -q $(SRC_PATH)/$*.err $*.err
+	@diff -q $(SRC_PATH)/$*.exit $*.exit
+
 # Consolidated targets
 
-.PHONY: check-qtest check-unit check
+.PHONY: check-qapi-schema check-qtest check-unit check
+check-qapi-schema: $(patsubst %,check-%, $(check-qapi-schema-y))
 check-qtest: $(patsubst %,check-qtest-%, $(QTEST_TARGETS))
 check-unit: $(patsubst %,check-%, $(check-unit-y))
 check-block: $(patsubst %,check-%, $(check-block-y))
-check: check-unit check-qtest
+check: check-qapi-schema check-unit check-qtest
 
 -include $(wildcard tests/*.d)
+-include $(wildcard tests/libqos/*.d)

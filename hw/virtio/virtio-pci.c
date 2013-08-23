@@ -89,12 +89,6 @@
 /* Flags track per-device state like workarounds for quirks in older guests. */
 #define VIRTIO_PCI_FLAG_BUS_MASTER_BUG  (1 << 0)
 
-/* QEMU doesn't strictly need write barriers since everything runs in
- * lock-step.  We'll leave the calls to wmb() in though to make it obvious for
- * KVM or if kqemu gets SMP support.
- */
-#define wmb() do { } while (0)
-
 /* HACK for virtio to determine if it's running a big endian guest */
 bool virtio_is_big_endian(void);
 
@@ -917,6 +911,7 @@ static void virtio_9p_pci_class_init(ObjectClass *klass, void *data)
     pcidev_k->device_id = PCI_DEVICE_ID_VIRTIO_9P;
     pcidev_k->revision = VIRTIO_PCI_ABI_VERSION;
     pcidev_k->class_id = 0x2;
+    set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
     dc->props = virtio_9p_pci_properties;
 }
 
@@ -972,8 +967,8 @@ static void virtio_pci_device_plugged(DeviceState *d)
         size = 1 << qemu_fls(size);
     }
 
-    memory_region_init_io(&proxy->bar, &virtio_pci_config_ops, proxy,
-                          "virtio-pci", size);
+    memory_region_init_io(&proxy->bar, OBJECT(proxy), &virtio_pci_config_ops,
+                          proxy, "virtio-pci", size);
     pci_register_bar(&proxy->pci_dev, 0, PCI_BASE_ADDRESS_SPACE_IO,
                      &proxy->bar);
 
@@ -1071,6 +1066,7 @@ static void virtio_blk_pci_class_init(ObjectClass *klass, void *data)
     VirtioPCIClass *k = VIRTIO_PCI_CLASS(klass);
     PCIDeviceClass *pcidev_k = PCI_DEVICE_CLASS(klass);
 
+    set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
     dc->props = virtio_blk_pci_properties;
     k->init = virtio_blk_pci_init;
     pcidev_k->vendor_id = PCI_VENDOR_ID_REDHAT_QUMRANET;
@@ -1141,6 +1137,7 @@ static void virtio_scsi_pci_class_init(ObjectClass *klass, void *data)
     VirtioPCIClass *k = VIRTIO_PCI_CLASS(klass);
     PCIDeviceClass *pcidev_k = PCI_DEVICE_CLASS(klass);
     k->init = virtio_scsi_pci_init_pci;
+    set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
     dc->props = virtio_scsi_pci_properties;
     pcidev_k->vendor_id = PCI_VENDOR_ID_REDHAT_QUMRANET;
     pcidev_k->device_id = PCI_DEVICE_ID_VIRTIO_SCSI;
@@ -1197,6 +1194,7 @@ static void vhost_scsi_pci_class_init(ObjectClass *klass, void *data)
     VirtioPCIClass *k = VIRTIO_PCI_CLASS(klass);
     PCIDeviceClass *pcidev_k = PCI_DEVICE_CLASS(klass);
     k->init = vhost_scsi_pci_init_pci;
+    set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
     dc->props = vhost_scsi_pci_properties;
     pcidev_k->vendor_id = PCI_VENDOR_ID_REDHAT_QUMRANET;
     pcidev_k->device_id = PCI_DEVICE_ID_VIRTIO_SCSI;
@@ -1277,6 +1275,7 @@ static void virtio_balloon_pci_class_init(ObjectClass *klass, void *data)
     VirtioPCIClass *k = VIRTIO_PCI_CLASS(klass);
     PCIDeviceClass *pcidev_k = PCI_DEVICE_CLASS(klass);
     k->init = virtio_balloon_pci_init;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
     dc->props = virtio_balloon_pci_properties;
     pcidev_k->vendor_id = PCI_VENDOR_ID_REDHAT_QUMRANET;
     pcidev_k->device_id = PCI_DEVICE_ID_VIRTIO_BALLOON;
@@ -1362,6 +1361,7 @@ static void virtio_serial_pci_class_init(ObjectClass *klass, void *data)
     VirtioPCIClass *k = VIRTIO_PCI_CLASS(klass);
     PCIDeviceClass *pcidev_k = PCI_DEVICE_CLASS(klass);
     k->init = virtio_serial_pci_init;
+    set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
     dc->props = virtio_serial_pci_properties;
     pcidev_k->vendor_id = PCI_VENDOR_ID_REDHAT_QUMRANET;
     pcidev_k->device_id = PCI_DEVICE_ID_VIRTIO_CONSOLE;
@@ -1423,6 +1423,7 @@ static void virtio_net_pci_class_init(ObjectClass *klass, void *data)
     k->device_id = PCI_DEVICE_ID_VIRTIO_NET;
     k->revision = VIRTIO_PCI_ABI_VERSION;
     k->class_id = PCI_CLASS_NETWORK_ETHERNET;
+    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
     dc->props = virtio_net_properties;
     vpciklass->init = virtio_net_pci_init;
 }
@@ -1461,7 +1462,7 @@ static int virtio_rng_pci_init(VirtIOPCIProxy *vpci_dev)
     }
 
     object_property_set_link(OBJECT(vrng),
-                             OBJECT(vrng->vdev.conf.default_backend), "rng",
+                             OBJECT(vrng->vdev.conf.rng), "rng",
                              NULL);
 
     return 0;
@@ -1474,6 +1475,7 @@ static void virtio_rng_pci_class_init(ObjectClass *klass, void *data)
     PCIDeviceClass *pcidev_k = PCI_DEVICE_CLASS(klass);
 
     k->init = virtio_rng_pci_init;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
     dc->props = virtio_rng_pci_properties;
 
     pcidev_k->vendor_id = PCI_VENDOR_ID_REDHAT_QUMRANET;

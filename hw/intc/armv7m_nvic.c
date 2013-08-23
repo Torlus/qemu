@@ -140,6 +140,7 @@ void armv7m_nvic_complete_irq(void *opaque, int irq)
 
 static uint32_t nvic_readl(nvic_state *s, uint32_t offset)
 {
+    ARMCPU *cpu;
     uint32_t val;
     int irq;
 
@@ -171,7 +172,8 @@ static uint32_t nvic_readl(nvic_state *s, uint32_t offset)
     case 0x1c: /* SysTick Calibration Value.  */
         return 10000;
     case 0xd00: /* CPUID Base.  */
-        return cpu_single_env->cp15.c0_cpuid;
+        cpu = ARM_CPU(current_cpu);
+        return cpu->env.cp15.c0_cpuid;
     case 0xd04: /* Interrupt Control State.  */
         /* VECTACTIVE */
         val = s->gic.running_irq[0];
@@ -206,7 +208,8 @@ static uint32_t nvic_readl(nvic_state *s, uint32_t offset)
             val |= (1 << 31);
         return val;
     case 0xd08: /* Vector Table Offset.  */
-        return cpu_single_env->v7m.vecbase;
+        cpu = ARM_CPU(current_cpu);
+        return cpu->env.v7m.vecbase;
     case 0xd0c: /* Application Interrupt/Reset Control.  */
         return 0xfa05000;
     case 0xd10: /* System Control.  */
@@ -279,6 +282,7 @@ static uint32_t nvic_readl(nvic_state *s, uint32_t offset)
 
 static void nvic_writel(nvic_state *s, uint32_t offset, uint32_t value)
 {
+    ARMCPU *cpu;
     uint32_t oldval;
     switch (offset) {
     case 0x10: /* SysTick Control and Status.  */
@@ -331,7 +335,8 @@ static void nvic_writel(nvic_state *s, uint32_t offset, uint32_t value)
         }
         break;
     case 0xd08: /* Vector Table Offset.  */
-        cpu_single_env->v7m.vecbase = value & 0xffffff80;
+        cpu = ARM_CPU(current_cpu);
+        cpu->env.v7m.vecbase = value & 0xffffff80;
         break;
     case 0xd0c: /* Application Interrupt/Reset Control.  */
         if ((value >> 16) == 0x05fa) {
@@ -487,17 +492,18 @@ static void armv7m_nvic_realize(DeviceState *dev, Error **errp)
      * We use overlaying to put the GIC like registers
      * over the top of the system control register region.
      */
-    memory_region_init(&s->container, "nvic", 0x1000);
+    memory_region_init(&s->container, OBJECT(s), "nvic", 0x1000);
     /* The system register region goes at the bottom of the priority
      * stack as it covers the whole page.
      */
-    memory_region_init_io(&s->sysregmem, &nvic_sysreg_ops, s,
+    memory_region_init_io(&s->sysregmem, OBJECT(s), &nvic_sysreg_ops, s,
                           "nvic_sysregs", 0x1000);
     memory_region_add_subregion(&s->container, 0, &s->sysregmem);
     /* Alias the GIC region so we can get only the section of it
      * we need, and layer it on top of the system register region.
      */
-    memory_region_init_alias(&s->gic_iomem_alias, "nvic-gic", &s->gic.iomem,
+    memory_region_init_alias(&s->gic_iomem_alias, OBJECT(s),
+                             "nvic-gic", &s->gic.iomem,
                              0x100, 0xc00);
     memory_region_add_subregion_overlap(&s->container, 0x100,
                                         &s->gic_iomem_alias, 1);

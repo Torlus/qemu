@@ -410,17 +410,17 @@ static const MemoryRegionOps PPC_prep_io_ops = {
         .read = { PPC_prep_io_readb, PPC_prep_io_readw, PPC_prep_io_readl },
         .write = { PPC_prep_io_writeb, PPC_prep_io_writew, PPC_prep_io_writel },
     },
-    .endianness = DEVICE_LITTLE_ENDIAN,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 #define NVRAM_SIZE        0x2000
 
 static void cpu_request_exit(void *opaque, int irq, int level)
 {
-    CPUPPCState *env = cpu_single_env;
+    CPUState *cpu = current_cpu;
 
-    if (env && level) {
-        cpu_exit(env);
+    if (cpu && level) {
+        cpu_exit(cpu);
     }
 }
 
@@ -433,6 +433,16 @@ static void ppc_prep_reset(void *opaque)
     /* Reset address */
     cpu->env.nip = 0xfffffffc;
 }
+
+static const MemoryRegionPortio prep_portio_list[] = {
+    /* System control ports */
+    { 0x0092, 1, 1, .read = PREP_io_800_readb, .write = PREP_io_800_writeb, },
+    { 0x0800, 0x52, 1,
+      .read = PREP_io_800_readb, .write = PREP_io_800_writeb, },
+    /* Special port to get debug messages from Open-Firmware */
+    { 0x0F00, 4, 1, .write = PPC_debug_write, },
+    PORTIO_END_OF_LIST(),
+};
 
 /* PowerPC PREP hardware initialisation */
 static void ppc_prep_init(QEMUMachineInitArgs *args)
@@ -450,6 +460,7 @@ static void ppc_prep_init(QEMUMachineInitArgs *args)
     nvram_t nvram;
     M48t59State *m48t59;
     MemoryRegion *PPC_io_memory = g_new(MemoryRegion, 1);
+    PortioList *port_list = g_new(PortioList, 1);
 #if 0
     MemoryRegion *xcsr = g_new(MemoryRegion, 1);
 #endif
@@ -494,12 +505,12 @@ static void ppc_prep_init(QEMUMachineInitArgs *args)
     }
 
     /* allocate RAM */
-    memory_region_init_ram(ram, "ppc_prep.ram", ram_size);
+    memory_region_init_ram(ram, NULL, "ppc_prep.ram", ram_size);
     vmstate_register_ram_global(ram);
     memory_region_add_subregion(sysmem, 0, ram);
 
     /* allocate and load BIOS */
-    memory_region_init_ram(bios, "ppc_prep.bios", BIOS_SIZE);
+    memory_region_init_ram(bios, NULL, "ppc_prep.bios", BIOS_SIZE);
     memory_region_set_readonly(bios, true);
     memory_region_add_subregion(sysmem, (uint32_t)(-BIOS_SIZE), bios);
     vmstate_register_ram_global(bios);
@@ -594,22 +605,24 @@ static void ppc_prep_init(QEMUMachineInitArgs *args)
     /* PCI -> ISA bridge */
     pci = pci_create_simple(pci_bus, PCI_DEVFN(1, 0), "i82378");
     cpu_exit_irq = qemu_allocate_irqs(cpu_request_exit, NULL, 1);
+    cpu = POWERPC_CPU(first_cpu);
     qdev_connect_gpio_out(&pci->qdev, 0,
-                          first_cpu->irq_inputs[PPC6xx_INPUT_INT]);
+                          cpu->env.irq_inputs[PPC6xx_INPUT_INT]);
     qdev_connect_gpio_out(&pci->qdev, 1, *cpu_exit_irq);
     sysbus_connect_irq(&pcihost->busdev, 0, qdev_get_gpio_in(&pci->qdev, 9));
     sysbus_connect_irq(&pcihost->busdev, 1, qdev_get_gpio_in(&pci->qdev, 11));
     sysbus_connect_irq(&pcihost->busdev, 2, qdev_get_gpio_in(&pci->qdev, 9));
     sysbus_connect_irq(&pcihost->busdev, 3, qdev_get_gpio_in(&pci->qdev, 11));
-    isa_bus = DO_UPCAST(ISABus, qbus, qdev_get_child_bus(&pci->qdev, "isa.0"));
+    isa_bus = ISA_BUS(qdev_get_child_bus(DEVICE(pci), "isa.0"));
 
     /* Super I/O (parallel + serial ports) */
     isa = isa_create(isa_bus, TYPE_PC87312);
-    qdev_prop_set_uint8(&isa->qdev, "config", 13); /* fdc, ser0, ser1, par0 */
-    qdev_init_nofail(&isa->qdev);
+    dev = DEVICE(isa);
+    qdev_prop_set_uint8(dev, "config", 13); /* fdc, ser0, ser1, par0 */
+    qdev_init_nofail(dev);
 
     /* Register 8 MB of ISA IO space (needed for non-contiguous map) */
-    memory_region_init_io(PPC_io_memory, &PPC_prep_io_ops, sysctrl,
+    memory_region_init_io(PPC_io_memory, NULL, &PPC_prep_io_ops, sysctrl,
                           "ppc-io", 0x00800000);
     memory_region_add_subregion(sysmem, 0x80000000, PPC_io_memory);
 
@@ -627,7 +640,7 @@ static void ppc_prep_init(QEMUMachineInitArgs *args)
             isa_ne2000_init(isa_bus, ne2000_io[i], ne2000_irq[i],
                             &nd_table[i]);
         } else {
-            pci_nic_init_nofail(&nd_table[i], "ne2k_pci", NULL);
+            pci_nic_init_nofail(&nd_table[i], pci_bus, "ne2k_pci", NULL);
         }
     }
 
@@ -639,15 +652,15 @@ static void ppc_prep_init(QEMUMachineInitArgs *args)
     }
     isa_create_simple(isa_bus, "i8042");
 
-    sysctrl->reset_irq = first_cpu->irq_inputs[PPC6xx_INPUT_HRESET];
-    /* System control ports */
-    register_ioport_read(0x0092, 0x01, 1, &PREP_io_800_readb, sysctrl);
-    register_ioport_write(0x0092, 0x01, 1, &PREP_io_800_writeb, sysctrl);
-    register_ioport_read(0x0800, 0x52, 1, &PREP_io_800_readb, sysctrl);
-    register_ioport_write(0x0800, 0x52, 1, &PREP_io_800_writeb, sysctrl);
+    cpu = POWERPC_CPU(first_cpu);
+    sysctrl->reset_irq = cpu->env.irq_inputs[PPC6xx_INPUT_HRESET];
+
+    portio_list_init(port_list, NULL, prep_portio_list, sysctrl, "prep");
+    portio_list_add(port_list, get_system_io(), 0x0);
+
     /* PowerPC control and status register group */
 #if 0
-    memory_region_init_io(xcsr, &PPC_XCSR_ops, NULL, "ppc-xcsr", 0x1000);
+    memory_region_init_io(xcsr, NULL, &PPC_XCSR_ops, NULL, "ppc-xcsr", 0x1000);
     memory_region_add_subregion(sysmem, 0xFEFF0000, xcsr);
 #endif
 
@@ -671,9 +684,6 @@ static void ppc_prep_init(QEMUMachineInitArgs *args)
                          /* XXX: need an option to load a NVRAM image */
                          0,
                          graphic_width, graphic_height, graphic_depth);
-
-    /* Special port to get debug messages from Open-Firmware */
-    register_ioport_write(0x0F00, 4, 1, &PPC_debug_write, NULL);
 }
 
 static QEMUMachine prep_machine = {

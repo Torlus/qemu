@@ -64,8 +64,12 @@ out:
 static void hostmem_listener_commit(MemoryListener *listener)
 {
     HostMem *hostmem = container_of(listener, HostMem, listener);
+    int i;
 
     qemu_mutex_lock(&hostmem->current_regions_lock);
+    for (i = 0; i < hostmem->num_current_regions; i++) {
+        memory_region_unref(hostmem->current_regions[i].mr);
+    }
     g_free(hostmem->current_regions);
     hostmem->current_regions = hostmem->new_regions;
     hostmem->num_current_regions = hostmem->num_new_regions;
@@ -90,10 +94,13 @@ static void hostmem_append_new_region(HostMem *hostmem,
     hostmem->new_regions[num] = (HostMemRegion){
         .host_addr = ram_ptr + section->offset_within_region,
         .guest_addr = section->offset_within_address_space,
-        .size = section->size,
+        .size = int128_get64(section->size),
         .readonly = section->readonly,
+        .mr = section->mr,
     };
     hostmem->num_new_regions++;
+
+    memory_region_ref(section->mr);
 }
 
 static void hostmem_listener_append_region(MemoryListener *listener,

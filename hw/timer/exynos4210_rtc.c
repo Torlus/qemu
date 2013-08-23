@@ -31,7 +31,6 @@
 #include "hw/ptimer.h"
 
 #include "hw/hw.h"
-#include "qemu/timer.h"
 #include "sysemu/sysemu.h"
 
 #include "hw/arm/exynos4210.h"
@@ -80,8 +79,13 @@
 
 #define     RTC_BASE_FREQ       32768
 
+#define TYPE_EXYNOS4210_RTC "exynos4210.rtc"
+#define EXYNOS4210_RTC(obj) \
+    OBJECT_CHECK(Exynos4210RTCState, (obj), TYPE_EXYNOS4210_RTC)
+
 typedef struct Exynos4210RTCState {
-    SysBusDevice busdev;
+    SysBusDevice parent_obj;
+
     MemoryRegion iomem;
 
     /* registers */
@@ -508,7 +512,7 @@ static void exynos4210_rtc_write(void *opaque, hwaddr offset,
  */
 static void exynos4210_rtc_reset(DeviceState *d)
 {
-    Exynos4210RTCState *s = (Exynos4210RTCState *)d;
+    Exynos4210RTCState *s = EXYNOS4210_RTC(d);
 
     qemu_get_timedate(&s->current_tm, 0);
 
@@ -545,7 +549,7 @@ static const MemoryRegionOps exynos4210_rtc_ops = {
  */
 static int exynos4210_rtc_init(SysBusDevice *dev)
 {
-    Exynos4210RTCState *s = FROM_SYSBUS(Exynos4210RTCState, dev);
+    Exynos4210RTCState *s = EXYNOS4210_RTC(dev);
     QEMUBH *bh;
 
     bh = qemu_bh_new(exynos4210_rtc_tick, s);
@@ -560,8 +564,8 @@ static int exynos4210_rtc_init(SysBusDevice *dev)
     sysbus_init_irq(dev, &s->alm_irq);
     sysbus_init_irq(dev, &s->tick_irq);
 
-    memory_region_init_io(&s->iomem, &exynos4210_rtc_ops, s, "exynos4210-rtc",
-            EXYNOS4210_RTC_REG_MEM_SIZE);
+    memory_region_init_io(&s->iomem, OBJECT(s), &exynos4210_rtc_ops, s,
+                          "exynos4210-rtc", EXYNOS4210_RTC_REG_MEM_SIZE);
     sysbus_init_mmio(dev, &s->iomem);
 
     return 0;
@@ -578,7 +582,7 @@ static void exynos4210_rtc_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo exynos4210_rtc_info = {
-    .name          = "exynos4210.rtc",
+    .name          = TYPE_EXYNOS4210_RTC,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Exynos4210RTCState),
     .class_init    = exynos4210_rtc_class_init,

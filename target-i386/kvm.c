@@ -31,7 +31,7 @@
 #include "hw/i386/pc.h"
 #include "hw/i386/apic.h"
 #include "exec/ioport.h"
-#include "hyperv.h"
+#include <asm/hyperv.h>
 #include "hw/pci/pci.h"
 
 //#define DEBUG_KVM
@@ -318,7 +318,7 @@ int kvm_arch_on_sigbus_vcpu(CPUState *c, int code, void *addr)
 
     if ((env->mcg_cap & MCG_SER_P) && addr
         && (code == BUS_MCEERR_AR || code == BUS_MCEERR_AO)) {
-        if (qemu_ram_addr_from_host(addr, &ram_addr) ||
+        if (qemu_ram_addr_from_host(addr, &ram_addr) == NULL ||
             !kvm_physical_memory_addr_from_host(c->kvm_state, addr, &paddr)) {
             fprintf(stderr, "Hardware memory error for memory used by "
                     "QEMU itself instead of guest system!\n");
@@ -345,20 +345,22 @@ int kvm_arch_on_sigbus_vcpu(CPUState *c, int code, void *addr)
 
 int kvm_arch_on_sigbus(int code, void *addr)
 {
-    if ((first_cpu->mcg_cap & MCG_SER_P) && addr && code == BUS_MCEERR_AO) {
+    X86CPU *cpu = X86_CPU(first_cpu);
+
+    if ((cpu->env.mcg_cap & MCG_SER_P) && addr && code == BUS_MCEERR_AO) {
         ram_addr_t ram_addr;
         hwaddr paddr;
 
         /* Hope we are lucky for AO MCE */
-        if (qemu_ram_addr_from_host(addr, &ram_addr) ||
-            !kvm_physical_memory_addr_from_host(CPU(first_cpu)->kvm_state,
+        if (qemu_ram_addr_from_host(addr, &ram_addr) == NULL ||
+            !kvm_physical_memory_addr_from_host(first_cpu->kvm_state,
                                                 addr, &paddr)) {
             fprintf(stderr, "Hardware memory error for memory used by "
                     "QEMU itself instead of guest system!: %p\n", addr);
             return 0;
         }
         kvm_hwpoison_page_add(ram_addr);
-        kvm_mce_inject(x86_env_get_cpu(first_cpu), paddr, code);
+        kvm_mce_inject(X86_CPU(first_cpu), paddr, code);
     } else {
         if (code == BUS_MCEERR_AO) {
             return 0;
@@ -418,6 +420,22 @@ unsigned long kvm_arch_vcpu_id(CPUState *cs)
     return cpu->env.cpuid_apic_id;
 }
 
+#ifndef KVM_CPUID_SIGNATURE_NEXT
+#define KVM_CPUID_SIGNATURE_NEXT                0x40000100
+#endif
+
+static bool hyperv_hypercall_available(X86CPU *cpu)
+{
+    return cpu->hyperv_vapic ||
+           (cpu->hyperv_spinlock_attempts != HYPERV_SPINLOCK_NEVER_RETRY);
+}
+
+static bool hyperv_enabled(X86CPU *cpu)
+{
+    return hyperv_hypercall_available(cpu) ||
+           cpu->hyperv_relaxed_timing;
+}
+
 #define KVM_MAX_CPUID_ENTRIES  100
 
 int kvm_arch_init_vcpu(CPUState *cs)
@@ -440,7 +458,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
     c = &cpuid_data.entries[cpuid_i++];
     memset(c, 0, sizeof(*c));
     c->function = KVM_CPUID_SIGNATURE;
-    if (!hyperv_enabled()) {
+    if (!hyperv_enabled(cpu)) {
         memcpy(signature, "KVMKVMKVM\0\0\0", 12);
         c->eax = 0;
     } else {
@@ -456,7 +474,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
     c->function = KVM_CPUID_FEATURES;
     c->eax = env->features[FEAT_KVM];
 
-    if (hyperv_enabled()) {
+    if (hyperv_enabled(cpu)) {
         memcpy(signature, "Hv#1\0\0\0\0\0\0\0\0", 12);
         c->eax = signature[0];
 
@@ -469,10 +487,10 @@ int kvm_arch_init_vcpu(CPUState *cs)
         c = &cpuid_data.entries[cpuid_i++];
         memset(c, 0, sizeof(*c));
         c->function = HYPERV_CPUID_FEATURES;
-        if (hyperv_relaxed_timing_enabled()) {
+        if (cpu->hyperv_relaxed_timing) {
             c->eax |= HV_X64_MSR_HYPERCALL_AVAILABLE;
         }
-        if (hyperv_vapic_recommended()) {
+        if (cpu->hyperv_vapic) {
             c->eax |= HV_X64_MSR_HYPERCALL_AVAILABLE;
             c->eax |= HV_X64_MSR_APIC_ACCESS_AVAILABLE;
         }
@@ -480,13 +498,13 @@ int kvm_arch_init_vcpu(CPUState *cs)
         c = &cpuid_data.entries[cpuid_i++];
         memset(c, 0, sizeof(*c));
         c->function = HYPERV_CPUID_ENLIGHTMENT_INFO;
-        if (hyperv_relaxed_timing_enabled()) {
+        if (cpu->hyperv_relaxed_timing) {
             c->eax |= HV_X64_RELAXED_TIMING_RECOMMENDED;
         }
-        if (hyperv_vapic_recommended()) {
+        if (cpu->hyperv_vapic) {
             c->eax |= HV_X64_APIC_ACCESS_RECOMMENDED;
         }
-        c->ebx = hyperv_get_spinlock_retries();
+        c->ebx = cpu->hyperv_spinlock_attempts;
 
         c = &cpuid_data.entries[cpuid_i++];
         memset(c, 0, sizeof(*c));
@@ -741,7 +759,6 @@ static int kvm_get_supported_msrs(KVMState *s)
 
 int kvm_arch_init(KVMState *s)
 {
-    QemuOptsList *list = qemu_find_opts("machine");
     uint64_t identity_base = 0xfffbc000;
     uint64_t shadow_mem;
     int ret;
@@ -790,15 +807,13 @@ int kvm_arch_init(KVMState *s)
     }
     qemu_register_reset(kvm_unpoison_all, NULL);
 
-    if (!QTAILQ_EMPTY(&list->head)) {
-        shadow_mem = qemu_opt_get_size(QTAILQ_FIRST(&list->head),
-                                       "kvm_shadow_mem", -1);
-        if (shadow_mem != -1) {
-            shadow_mem /= 4096;
-            ret = kvm_vm_ioctl(s, KVM_SET_NR_MMU_PAGES, shadow_mem);
-            if (ret < 0) {
-                return ret;
-            }
+    shadow_mem = qemu_opt_get_size(qemu_get_machine_opts(),
+                                   "kvm_shadow_mem", -1);
+    if (shadow_mem != -1) {
+        shadow_mem /= 4096;
+        ret = kvm_vm_ioctl(s, KVM_SET_NR_MMU_PAGES, shadow_mem);
+        if (ret < 0) {
+            return ret;
         }
     }
     return 0;
@@ -1115,11 +1130,11 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
             kvm_msr_entry_set(&msrs[n++], MSR_KVM_STEAL_TIME,
                               env->steal_time_msr);
         }
-        if (hyperv_hypercall_available()) {
+        if (hyperv_hypercall_available(cpu)) {
             kvm_msr_entry_set(&msrs[n++], HV_X64_MSR_GUEST_OS_ID, 0);
             kvm_msr_entry_set(&msrs[n++], HV_X64_MSR_HYPERCALL, 0);
         }
-        if (hyperv_vapic_recommended()) {
+        if (cpu->hyperv_vapic) {
             kvm_msr_entry_set(&msrs[n++], HV_X64_MSR_APIC_ASSIST_PAGE, 0);
         }
     }
@@ -1595,6 +1610,7 @@ static int kvm_get_vcpu_events(X86CPU *cpu)
 
 static int kvm_guest_debug_workarounds(X86CPU *cpu)
 {
+    CPUState *cs = CPU(cpu);
     CPUX86State *env = &cpu->env;
     int ret = 0;
     unsigned long reinject_trap = 0;
@@ -1617,8 +1633,8 @@ static int kvm_guest_debug_workarounds(X86CPU *cpu)
      * reinject them via SET_GUEST_DEBUG.
      */
     if (reinject_trap ||
-        (!kvm_has_robust_singlestep() && env->singlestep_enabled)) {
-        ret = kvm_update_guest_debug(env, reinject_trap);
+        (!kvm_has_robust_singlestep() && cs->singlestep_enabled)) {
+        ret = kvm_update_guest_debug(cs, reinject_trap);
     }
     return ret;
 }
@@ -1857,7 +1873,7 @@ int kvm_arch_process_async_events(CPUState *cs)
 
         cs->interrupt_request &= ~CPU_INTERRUPT_MCE;
 
-        kvm_cpu_synchronize_state(env);
+        kvm_cpu_synchronize_state(cs);
 
         if (env->exception_injected == EXCP08_DBLE) {
             /* this means triple fault */
@@ -1888,16 +1904,16 @@ int kvm_arch_process_async_events(CPUState *cs)
         cs->halted = 0;
     }
     if (cs->interrupt_request & CPU_INTERRUPT_INIT) {
-        kvm_cpu_synchronize_state(env);
+        kvm_cpu_synchronize_state(cs);
         do_cpu_init(cpu);
     }
     if (cs->interrupt_request & CPU_INTERRUPT_SIPI) {
-        kvm_cpu_synchronize_state(env);
+        kvm_cpu_synchronize_state(cs);
         do_cpu_sipi(cpu);
     }
     if (cs->interrupt_request & CPU_INTERRUPT_TPR) {
         cs->interrupt_request &= ~CPU_INTERRUPT_TPR;
-        kvm_cpu_synchronize_state(env);
+        kvm_cpu_synchronize_state(cs);
         apic_handle_tpr_access_report(env->apic_state, env->eip,
                                       env->tpr_access_type);
     }
@@ -1932,25 +1948,23 @@ static int kvm_handle_tpr_access(X86CPU *cpu)
     return 1;
 }
 
-int kvm_arch_insert_sw_breakpoint(CPUState *cpu, struct kvm_sw_breakpoint *bp)
+int kvm_arch_insert_sw_breakpoint(CPUState *cs, struct kvm_sw_breakpoint *bp)
 {
-    CPUX86State *env = &X86_CPU(cpu)->env;
     static const uint8_t int3 = 0xcc;
 
-    if (cpu_memory_rw_debug(env, bp->pc, (uint8_t *)&bp->saved_insn, 1, 0) ||
-        cpu_memory_rw_debug(env, bp->pc, (uint8_t *)&int3, 1, 1)) {
+    if (cpu_memory_rw_debug(cs, bp->pc, (uint8_t *)&bp->saved_insn, 1, 0) ||
+        cpu_memory_rw_debug(cs, bp->pc, (uint8_t *)&int3, 1, 1)) {
         return -EINVAL;
     }
     return 0;
 }
 
-int kvm_arch_remove_sw_breakpoint(CPUState *cpu, struct kvm_sw_breakpoint *bp)
+int kvm_arch_remove_sw_breakpoint(CPUState *cs, struct kvm_sw_breakpoint *bp)
 {
-    CPUX86State *env = &X86_CPU(cpu)->env;
     uint8_t int3;
 
-    if (cpu_memory_rw_debug(env, bp->pc, &int3, 1, 0) || int3 != 0xcc ||
-        cpu_memory_rw_debug(env, bp->pc, (uint8_t *)&bp->saved_insn, 1, 1)) {
+    if (cpu_memory_rw_debug(cs, bp->pc, &int3, 1, 0) || int3 != 0xcc ||
+        cpu_memory_rw_debug(cs, bp->pc, (uint8_t *)&bp->saved_insn, 1, 1)) {
         return -EINVAL;
     }
     return 0;
@@ -2043,13 +2057,14 @@ static CPUWatchpoint hw_watchpoint;
 static int kvm_handle_debug(X86CPU *cpu,
                             struct kvm_debug_exit_arch *arch_info)
 {
+    CPUState *cs = CPU(cpu);
     CPUX86State *env = &cpu->env;
     int ret = 0;
     int n;
 
     if (arch_info->exception == 1) {
         if (arch_info->dr6 & (1 << 14)) {
-            if (env->singlestep_enabled) {
+            if (cs->singlestep_enabled) {
                 ret = EXCP_DEBUG;
             }
         } else {
@@ -2079,7 +2094,7 @@ static int kvm_handle_debug(X86CPU *cpu,
         ret = EXCP_DEBUG;
     }
     if (ret == 0) {
-        cpu_synchronize_state(env);
+        cpu_synchronize_state(CPU(cpu));
         assert(env->exception_injected == -1);
 
         /* pass to guest */
@@ -2184,7 +2199,7 @@ bool kvm_arch_stop_on_emulation_error(CPUState *cs)
     X86CPU *cpu = X86_CPU(cs);
     CPUX86State *env = &cpu->env;
 
-    kvm_cpu_synchronize_state(env);
+    kvm_cpu_synchronize_state(cs);
     return !(env->cr[0] & CR0_PE_MASK) ||
            ((env->segs[R_CS].selector  & 3) != 3);
 }

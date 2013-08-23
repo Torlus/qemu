@@ -9,6 +9,9 @@
 
 // #define LOG_REG_ACCESS
 
+#define TYPE_BCM2835_TODO "bcm2835_todo"
+#define BCM2835_TODO(obj) OBJECT_CHECK(bcm2835_todo_state, (obj), TYPE_BCM2835_TODO)
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -51,15 +54,17 @@ static const VMStateDescription vmstate_bcm2835_todo = {
     }
 };
 
-static int bcm2835_todo_init(SysBusDevice *dev)
+static int bcm2835_todo_init(SysBusDevice *sbd)
 {
-    bcm2835_todo_state *s = FROM_SYSBUS(bcm2835_todo_state, dev);
-    
-    memory_region_init_io(&s->iomem, &bcm2835_todo_ops, s, 
+    // bcm2835_todo_state *s = FROM_SYSBUS(bcm2835_todo_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_todo_state *s = BCM2835_TODO(dev);
+
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_todo_ops, s, 
         "bcm2835_todo", 0x1000000);
-    sysbus_init_mmio(dev, &s->iomem);
+    sysbus_init_mmio(sbd, &s->iomem);
     
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_todo, s);
+    vmstate_register(dev, -1, &vmstate_bcm2835_todo, s);
 
     return 0;
 }

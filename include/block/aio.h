@@ -17,6 +17,7 @@
 #include "qemu-common.h"
 #include "qemu/queue.h"
 #include "qemu/event_notifier.h"
+#include "qemu/thread.h"
 
 typedef struct BlockDriverAIOCB BlockDriverAIOCB;
 typedef void BlockDriverCompletionFunc(void *opaque, int ret);
@@ -53,6 +54,8 @@ typedef struct AioContext {
      */
     int walking_handlers;
 
+    /* lock to protect between bh's adders and deleter */
+    QemuMutex bh_lock;
     /* Anchor of the list of Bottom Halves belonging to the context */
     struct QEMUBH *first_bh;
 
@@ -70,9 +73,6 @@ typedef struct AioContext {
     /* Thread pool for performing work and receiving completion callbacks */
     struct ThreadPool *thread_pool;
 } AioContext;
-
-/* Returns 1 if there are still outstanding AIO requests; 0 otherwise */
-typedef int (AioFlushEventNotifierHandler)(EventNotifier *e);
 
 /**
  * aio_context_new: Allocate a new AioContext.
@@ -127,6 +127,8 @@ void aio_notify(AioContext *ctx);
  * aio_bh_poll: Poll bottom halves for an AioContext.
  *
  * These are internal functions used by the QEMU main loop.
+ * And notice that multiple occurrences of aio_bh_poll cannot
+ * be called concurrently
  */
 int aio_bh_poll(AioContext *ctx);
 
@@ -163,6 +165,8 @@ void qemu_bh_cancel(QEMUBH *bh);
  * Deleting a bottom half frees the memory that was allocated for it by
  * qemu_bh_new.  It also implies canceling the bottom half if it was
  * scheduled.
+ * This func is async. The bottom half will do the delete action at the finial
+ * end.
  *
  * @bh: The bottom half to be deleted.
  */
@@ -191,9 +195,6 @@ bool aio_pending(AioContext *ctx);
 bool aio_poll(AioContext *ctx, bool blocking);
 
 #ifdef CONFIG_POSIX
-/* Returns 1 if there are still outstanding AIO requests; 0 otherwise */
-typedef int (AioFlushHandler)(void *opaque);
-
 /* Register a file descriptor and associated callbacks.  Behaves very similarly
  * to qemu_set_fd_handler2.  Unlike qemu_set_fd_handler2, these callbacks will
  * be invoked when using qemu_aio_wait().
@@ -205,7 +206,6 @@ void aio_set_fd_handler(AioContext *ctx,
                         int fd,
                         IOHandler *io_read,
                         IOHandler *io_write,
-                        AioFlushHandler *io_flush,
                         void *opaque);
 #endif
 
@@ -218,8 +218,7 @@ void aio_set_fd_handler(AioContext *ctx,
  */
 void aio_set_event_notifier(AioContext *ctx,
                             EventNotifier *notifier,
-                            EventNotifierHandler *io_read,
-                            AioFlushEventNotifierHandler *io_flush);
+                            EventNotifierHandler *io_read);
 
 /* Return a GSource that lets the main loop poll the file descriptors attached
  * to this AioContext.
@@ -233,14 +232,12 @@ struct ThreadPool *aio_get_thread_pool(AioContext *ctx);
 
 bool qemu_aio_wait(void);
 void qemu_aio_set_event_notifier(EventNotifier *notifier,
-                                 EventNotifierHandler *io_read,
-                                 AioFlushEventNotifierHandler *io_flush);
+                                 EventNotifierHandler *io_read);
 
 #ifdef CONFIG_POSIX
 void qemu_aio_set_fd_handler(int fd,
                              IOHandler *io_read,
                              IOHandler *io_write,
-                             AioFlushHandler *io_flush,
                              void *opaque);
 #endif
 

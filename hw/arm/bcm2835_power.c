@@ -9,6 +9,9 @@
 
 #include "bcm2835_common.h"
 
+#define TYPE_BCM2835_POWER "bcm2835_power"
+#define BCM2835_POWER(obj) OBJECT_CHECK(bcm2835_power_state, (obj), TYPE_BCM2835_POWER)
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -73,17 +76,19 @@ static const VMStateDescription vmstate_bcm2835_power = {
     }
 };
 
-static int bcm2835_power_init(SysBusDevice *dev)
+static int bcm2835_power_init(SysBusDevice *sbd)
 {
-    bcm2835_power_state *s = FROM_SYSBUS(bcm2835_power_state, dev);
-    
+    // bcm2835_power_state *s = FROM_SYSBUS(bcm2835_power_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_power_state *s = BCM2835_POWER(dev);
+
     s->pending = 0;
     
-    sysbus_init_irq(dev, &s->mbox_irq);
-    memory_region_init_io(&s->iomem, &bcm2835_power_ops, s, 
+    sysbus_init_irq(sbd, &s->mbox_irq);
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_power_ops, s, 
         "bcm2835_power", 0x10);
-    sysbus_init_mmio(dev, &s->iomem);
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_power, s);
+    sysbus_init_mmio(sbd, &s->iomem);
+    vmstate_register(dev, -1, &vmstate_bcm2835_power, s);
 
     return 0;
 }

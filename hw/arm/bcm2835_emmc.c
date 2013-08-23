@@ -293,6 +293,9 @@
 
 // #define LOG_REG_ACCESS
 
+#define TYPE_BCM2835_EMMC "bcm2835_emmc"
+#define BCM2835_EMMC(obj) OBJECT_CHECK(bcm2835_emmc_state, (obj), TYPE_BCM2835_EMMC)
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -766,11 +769,13 @@ static const VMStateDescription vmstate_bcm2835_emmc = {
     }
 };
 
-static int bcm2835_emmc_init(SysBusDevice *dev)
+static int bcm2835_emmc_init(SysBusDevice *sbd)
 {
-    bcm2835_emmc_state *s = FROM_SYSBUS(bcm2835_emmc_state, dev);
-    
+    // bcm2835_emmc_state *s = FROM_SYSBUS(bcm2835_emmc_state, dev);
     DriveInfo *di;
+
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_emmc_state *s = BCM2835_EMMC(dev);
     
     di = drive_get(IF_SD, 0, 0);
     if (!di) {
@@ -809,12 +814,12 @@ static int bcm2835_emmc_init(SysBusDevice *dev)
     s->delay_timer = qemu_new_timer(vm_clock, 
 		SCALE_US, delayed_completion, s);
 
-    memory_region_init_io(&s->iomem, &bcm2835_emmc_ops, s, 
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_emmc_ops, s, 
         "bcm2835_emmc", 0x100000);
-    sysbus_init_mmio(dev, &s->iomem);
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_emmc, s);
+    sysbus_init_mmio(sbd, &s->iomem);
+    vmstate_register(dev, -1, &vmstate_bcm2835_emmc, s);
 
-    sysbus_init_irq(dev, &s->irq);
+    sysbus_init_irq(sbd, &s->irq);
 
     return 0;
 }

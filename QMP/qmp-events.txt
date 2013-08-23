@@ -172,6 +172,23 @@ Data:
   },
   "timestamp": { "seconds": 1265044230, "microseconds": 450486 } }
 
+NIC_RX_FILTER_CHANGED
+-----------------
+
+The event is emitted once until the query command is executed,
+the first event will always be emitted.
+
+Data:
+
+- "name": net client name (json-string)
+- "path": device path (json-string)
+
+{ "event": "NIC_RX_FILTER_CHANGED",
+  "data": { "name": "vnet0",
+            "path": "/machine/peripheral/vnet0/virtio-backend" },
+  "timestamp": { "seconds": 1368697518, "microseconds": 326866 } }
+}
+
 RESET
 -----
 
@@ -203,7 +220,8 @@ Emitted when the guest changes the RTC time.
 
 Data:
 
-- "offset": delta against the host UTC in seconds (json-number)
+- "offset": Offset between base RTC clock (as specified by -rtc base), and
+new RTC clock value (json-number)
 
 Example:
 

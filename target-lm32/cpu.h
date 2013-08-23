@@ -215,20 +215,6 @@ int cpu_lm32_handle_mmu_fault(CPULM32State *env, target_ulong address, int rw,
                               int mmu_idx);
 #define cpu_handle_mmu_fault cpu_lm32_handle_mmu_fault
 
-#if defined(CONFIG_USER_ONLY)
-static inline void cpu_clone_regs(CPULM32State *env, target_ulong newsp)
-{
-    if (newsp) {
-        env->regs[R_SP] = newsp;
-    }
-    env->regs[R_R1] = 0;
-}
-#endif
-
-static inline void cpu_set_tls(CPULM32State *env, target_ulong newtls)
-{
-}
-
 #include "exec/cpu-all.h"
 
 static inline void cpu_get_tb_cpu_state(CPULM32State *env, target_ulong *pc,
@@ -245,10 +231,5 @@ static inline bool cpu_has_work(CPUState *cpu)
 }
 
 #include "exec/exec-all.h"
-
-static inline void cpu_pc_from_tb(CPULM32State *env, TranslationBlock *tb)
-{
-    env->pc = tb->pc;
-}
 
 #endif

@@ -575,7 +575,7 @@ static void enet_write(void *opaque, hwaddr addr,
             break;
 
         case R_MC:
-             value &= ((1 < 7) - 1);
+             value &= ((1 << 7) - 1);
 
              /* Enable the MII.  */
              if (value & MC_EN) {
@@ -1001,7 +1001,7 @@ static void xilinx_enet_init(Object *obj)
 
     sysbus_init_irq(sbd, &s->irq);
 
-    memory_region_init_io(&s->iomem, &enet_ops, s, "enet", 0x40000);
+    memory_region_init_io(&s->iomem, OBJECT(s), &enet_ops, s, "enet", 0x40000);
     sysbus_init_mmio(sbd, &s->iomem);
 }
 

@@ -100,7 +100,6 @@ typedef struct BDRVRBDState {
     rados_ioctx_t io_ctx;
     rbd_image_t image;
     char name[RBD_MAX_IMAGE_NAME_SIZE];
-    int qemu_aio_count;
     char *snap;
     int event_reader_pos;
     RADOSCB *event_rcb;
@@ -428,17 +427,9 @@ static void qemu_rbd_aio_event_reader(void *opaque)
             if (s->event_reader_pos == sizeof(s->event_rcb)) {
                 s->event_reader_pos = 0;
                 qemu_rbd_complete_aio(s->event_rcb);
-                s->qemu_aio_count--;
             }
         }
     } while (ret < 0 && errno == EINTR);
-}
-
-static int qemu_rbd_aio_flush_cb(void *opaque)
-{
-    BDRVRBDState *s = opaque;
-
-    return (s->qemu_aio_count > 0);
 }
 
 /* TODO Convert to fine grained options */
@@ -554,7 +545,7 @@ static int qemu_rbd_open(BlockDriverState *bs, QDict *options, int flags)
     fcntl(s->fds[0], F_SETFL, O_NONBLOCK);
     fcntl(s->fds[1], F_SETFL, O_NONBLOCK);
     qemu_aio_set_fd_handler(s->fds[RBD_FD_READ], qemu_rbd_aio_event_reader,
-                            NULL, qemu_rbd_aio_flush_cb, s);
+                            NULL, s);
 
 
     qemu_opts_del(opts);
@@ -578,7 +569,7 @@ static void qemu_rbd_close(BlockDriverState *bs)
 
     close(s->fds[0]);
     close(s->fds[1]);
-    qemu_aio_set_fd_handler(s->fds[RBD_FD_READ], NULL, NULL, NULL, NULL);
+    qemu_aio_set_fd_handler(s->fds[RBD_FD_READ], NULL, NULL, NULL);
 
     rbd_close(s->image);
     rados_ioctx_destroy(s->io_ctx);
@@ -741,8 +732,6 @@ static BlockDriverAIOCB *rbd_start_aio(BlockDriverState *bs,
     off = sector_num * BDRV_SECTOR_SIZE;
     size = nb_sectors * BDRV_SECTOR_SIZE;
 
-    s->qemu_aio_count++; /* All the RADOSCB */
-
     rcb = g_malloc(sizeof(RADOSCB));
     rcb->done = 0;
     rcb->acb = acb;
@@ -779,7 +768,6 @@ static BlockDriverAIOCB *rbd_start_aio(BlockDriverState *bs,
 
 failed:
     g_free(rcb);
-    s->qemu_aio_count--;
     qemu_aio_release(acb);
     return NULL;
 }
@@ -996,6 +984,7 @@ static BlockDriver bdrv_rbd = {
     .bdrv_file_open     = qemu_rbd_open,
     .bdrv_close         = qemu_rbd_close,
     .bdrv_create        = qemu_rbd_create,
+    .bdrv_has_zero_init = bdrv_has_zero_init_1,
     .bdrv_get_info      = qemu_rbd_getinfo,
     .create_options     = qemu_rbd_create_options,
     .bdrv_getlength     = qemu_rbd_getlength,

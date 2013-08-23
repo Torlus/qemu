@@ -28,10 +28,10 @@
 
 #ifdef DEBUG_MMU
 #  define LOG_MMU(...) qemu_log(__VA_ARGS__)
-#  define LOG_MMU_STATE(env) log_cpu_state((env), 0)
+#  define LOG_MMU_STATE(cpu) log_cpu_state((cpu), 0)
 #else
 #  define LOG_MMU(...) do { } while (0)
-#  define LOG_MMU_STATE(...) do { } while (0)
+#  define LOG_MMU_STATE(cpu) do { } while (0)
 #endif
 
 #ifdef DEBUG_SLB
@@ -78,7 +78,7 @@ void dump_slb(FILE *f, fprintf_function cpu_fprintf, CPUPPCState *env)
     int i;
     uint64_t slbe, slbv;
 
-    cpu_synchronize_state(env);
+    cpu_synchronize_state(CPU(ppc_env_get_cpu(env)));
 
     cpu_fprintf(f, "SLB\tESID\t\t\tVSID\n");
     for (i = 0; i < env->slb_nr; i++) {

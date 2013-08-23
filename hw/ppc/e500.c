@@ -137,7 +137,6 @@ static int ppce500_load_device_tree(CPUPPCState *env,
     uint32_t clock_freq = 400000000;
     uint32_t tb_freq = 400000000;
     int i;
-    const char *toplevel_compat = NULL; /* user override */
     char compatible_sb[] = "fsl,mpc8544-immr\0simple-bus";
     char soc[128];
     char mpic[128];
@@ -158,14 +157,9 @@ static int ppce500_load_device_tree(CPUPPCState *env,
             0x0, 0xe1000000,
             0x0, 0x10000,
         };
-    QemuOpts *machine_opts;
-    const char *dtb_file = NULL;
-
-    machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
-    if (machine_opts) {
-        dtb_file = qemu_opt_get(machine_opts, "dtb");
-        toplevel_compat = qemu_opt_get(machine_opts, "dt_compatible");
-    }
+    QemuOpts *machine_opts = qemu_get_machine_opts();
+    const char *dtb_file = qemu_opt_get(machine_opts, "dtb");
+    const char *toplevel_compat = qemu_opt_get(machine_opts, "dt_compatible");
 
     if (dtb_file) {
         char *filename;
@@ -472,6 +466,99 @@ static void ppce500_cpu_reset(void *opaque)
     mmubooke_create_initial_mapping(env);
 }
 
+static DeviceState *ppce500_init_mpic_qemu(PPCE500Params *params,
+                                           qemu_irq **irqs)
+{
+    DeviceState *dev;
+    SysBusDevice *s;
+    int i, j, k;
+
+    dev = qdev_create(NULL, TYPE_OPENPIC);
+    qdev_prop_set_uint32(dev, "model", params->mpic_version);
+    qdev_prop_set_uint32(dev, "nb_cpus", smp_cpus);
+
+    qdev_init_nofail(dev);
+    s = SYS_BUS_DEVICE(dev);
+
+    k = 0;
+    for (i = 0; i < smp_cpus; i++) {
+        for (j = 0; j < OPENPIC_OUTPUT_NB; j++) {
+            sysbus_connect_irq(s, k++, irqs[i][j]);
+        }
+    }
+
+    return dev;
+}
+
+static DeviceState *ppce500_init_mpic_kvm(PPCE500Params *params,
+                                          qemu_irq **irqs)
+{
+    DeviceState *dev;
+    CPUState *cs;
+    int r;
+
+    dev = qdev_create(NULL, TYPE_KVM_OPENPIC);
+    qdev_prop_set_uint32(dev, "model", params->mpic_version);
+
+    r = qdev_init(dev);
+    if (r) {
+        return NULL;
+    }
+
+    for (cs = first_cpu; cs != NULL; cs = cs->next_cpu) {
+        if (kvm_openpic_connect_vcpu(dev, cs)) {
+            fprintf(stderr, "%s: failed to connect vcpu to irqchip\n",
+                    __func__);
+            abort();
+        }
+    }
+
+    return dev;
+}
+
+static qemu_irq *ppce500_init_mpic(PPCE500Params *params, MemoryRegion *ccsr,
+                                   qemu_irq **irqs)
+{
+    qemu_irq *mpic;
+    DeviceState *dev = NULL;
+    SysBusDevice *s;
+    int i;
+
+    mpic = g_new(qemu_irq, 256);
+
+    if (kvm_enabled()) {
+        QemuOpts *machine_opts = qemu_get_machine_opts();
+        bool irqchip_allowed = qemu_opt_get_bool(machine_opts,
+                                                "kernel_irqchip", true);
+        bool irqchip_required = qemu_opt_get_bool(machine_opts,
+                                                  "kernel_irqchip", false);
+
+        if (irqchip_allowed) {
+            dev = ppce500_init_mpic_kvm(params, irqs);
+        }
+
+        if (irqchip_required && !dev) {
+            fprintf(stderr, "%s: irqchip requested but unavailable\n",
+                    __func__);
+            abort();
+        }
+    }
+
+    if (!dev) {
+        dev = ppce500_init_mpic_qemu(params, irqs);
+    }
+
+    for (i = 0; i < 256; i++) {
+        mpic[i] = qdev_get_gpio_in(dev, i);
+    }
+
+    s = SYS_BUS_DEVICE(dev);
+    memory_region_add_subregion(ccsr, MPC8544_MPIC_REGS_OFFSET,
+                                s->mmio[0].memory);
+
+    return mpic;
+}
+
 void ppce500_init(PPCE500Params *params)
 {
     MemoryRegion *address_space_mem = get_system_memory();
@@ -487,7 +574,7 @@ void ppce500_init(PPCE500Params *params)
     target_ulong initrd_base = 0;
     target_long initrd_size = 0;
     target_ulong cur_base = 0;
-    int i = 0, j, k;
+    int i;
     unsigned int pci_irq_nrs[4] = {1, 2, 3, 4};
     qemu_irq **irqs, *mpic;
     DeviceState *dev;
@@ -550,7 +637,7 @@ void ppce500_init(PPCE500Params *params)
     params->ram_size = ram_size;
 
     /* Register Memory */
-    memory_region_init_ram(ram, "mpc8544ds.ram", ram_size);
+    memory_region_init_ram(ram, NULL, "mpc8544ds.ram", ram_size);
     vmstate_register_ram_global(ram);
     memory_region_add_subregion(address_space_mem, 0, ram);
 
@@ -563,27 +650,7 @@ void ppce500_init(PPCE500Params *params)
     memory_region_add_subregion(address_space_mem, MPC8544_CCSRBAR_BASE,
                                 ccsr_addr_space);
 
-    /* MPIC */
-    mpic = g_new(qemu_irq, 256);
-    dev = qdev_create(NULL, "openpic");
-    qdev_prop_set_uint32(dev, "nb_cpus", smp_cpus);
-    qdev_prop_set_uint32(dev, "model", params->mpic_version);
-    qdev_init_nofail(dev);
-    s = SYS_BUS_DEVICE(dev);
-
-    k = 0;
-    for (i = 0; i < smp_cpus; i++) {
-        for (j = 0; j < OPENPIC_OUTPUT_NB; j++) {
-            sysbus_connect_irq(s, k++, irqs[i][j]);
-        }
-    }
-
-    for (i = 0; i < 256; i++) {
-        mpic[i] = qdev_get_gpio_in(dev, i);
-    }
-
-    memory_region_add_subregion(ccsr_addr_space, MPC8544_MPIC_REGS_OFFSET,
-                                s->mmio[0].memory);
+    mpic = ppce500_init_mpic(params, ccsr_addr_space, irqs);
 
     /* Serial */
     if (serial_hds[0]) {
@@ -626,7 +693,7 @@ void ppce500_init(PPCE500Params *params)
     if (pci_bus) {
         /* Register network interfaces. */
         for (i = 0; i < nb_nics; i++) {
-            pci_nic_init_nofail(&nd_table[i], "virtio", NULL);
+            pci_nic_init_nofail(&nd_table[i], pci_bus, "virtio", NULL);
         }
     }
 
@@ -702,7 +769,7 @@ static int e500_ccsr_initfn(SysBusDevice *dev)
     PPCE500CCSRState *ccsr;
 
     ccsr = CCSR(dev);
-    memory_region_init(&ccsr->ccsr_space, "e500-ccsr",
+    memory_region_init(&ccsr->ccsr_space, OBJECT(ccsr), "e500-ccsr",
                        MPC8544_CCSRBAR_SIZE);
     return 0;
 }

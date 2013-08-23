@@ -65,6 +65,9 @@ typedef struct {
     qemu_irq irq;
 } dmachan;
 
+#define TYPE_BCM2835_DMA "bcm2835_dma"
+#define BCM2835_DMA(obj) OBJECT_CHECK(bcm2835_dma_state, (obj), TYPE_BCM2835_DMA)
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem0_14;
@@ -326,27 +329,29 @@ static const VMStateDescription vmstate_bcm2835_dma = {
     }
 };
 
-static int bcm2835_dma_init(SysBusDevice *dev)
+static int bcm2835_dma_init(SysBusDevice *sbd)
 {
     int n;
-    bcm2835_dma_state *s = FROM_SYSBUS(bcm2835_dma_state, dev);
-    
+    // bcm2835_dma_state *s = FROM_SYSBUS(bcm2835_dma_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_dma_state *s = BCM2835_DMA(dev);
+
     s->enable = 0xffff;
     s->int_status = 0;
     for(n = 0; n < 16; n++) {
         s->chan[n].cs = 0;
         s->chan[n].conblk_ad = 0;
-        sysbus_init_irq(dev, &s->chan[n].irq);
+        sysbus_init_irq(sbd, &s->chan[n].irq);
     }
     
-    memory_region_init_io(&s->iomem0_14, &bcm2835_dma0_14_ops, s, 
+    memory_region_init_io(&s->iomem0_14, OBJECT(s), &bcm2835_dma0_14_ops, s, 
         "bcm2835_dma0_14", 0xf00);
-    sysbus_init_mmio(dev, &s->iomem0_14);
-    memory_region_init_io(&s->iomem15, &bcm2835_dma15_ops, s, 
+    sysbus_init_mmio(sbd, &s->iomem0_14);
+    memory_region_init_io(&s->iomem15, OBJECT(s), &bcm2835_dma15_ops, s, 
         "bcm2835_dma15", 0x100);
-    sysbus_init_mmio(dev, &s->iomem15);
+    sysbus_init_mmio(sbd, &s->iomem15);
     
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_dma, s);
+    vmstate_register(dev, -1, &vmstate_bcm2835_dma, s);
 
     return 0;
 }

@@ -91,7 +91,7 @@ typedef struct PowerPCCPU {
 
 static inline PowerPCCPU *ppc_env_get_cpu(CPUPPCState *env)
 {
-    return POWERPC_CPU(container_of(env, PowerPCCPU, env));
+    return container_of(env, PowerPCCPU, env);
 }
 
 #define ENV_GET_CPU(e) CPU(ppc_env_get_cpu(e))
@@ -101,5 +101,16 @@ static inline PowerPCCPU *ppc_env_get_cpu(CPUPPCState *env)
 PowerPCCPUClass *ppc_cpu_class_by_pvr(uint32_t pvr);
 
 void ppc_cpu_do_interrupt(CPUState *cpu);
+void ppc_cpu_dump_state(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
+                        int flags);
+void ppc_cpu_dump_statistics(CPUState *cpu, FILE *f,
+                             fprintf_function cpu_fprintf, int flags);
+hwaddr ppc_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
+int ppc_cpu_gdb_read_register(CPUState *cpu, uint8_t *buf, int reg);
+int ppc_cpu_gdb_write_register(CPUState *cpu, uint8_t *buf, int reg);
+
+#ifndef CONFIG_USER_ONLY
+extern const struct VMStateDescription vmstate_ppc_cpu;
+#endif
 
 #endif

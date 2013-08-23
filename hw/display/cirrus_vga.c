@@ -2600,7 +2600,6 @@ static void cirrus_vga_ioport_write(void *opaque, hwaddr addr, uint64_t val,
 #endif
 	cirrus_vga_write_sr(c, val);
         break;
-	break;
     case 0x3c6:
 	cirrus_write_hidden_dac(c, val);
 	break;
@@ -2806,7 +2805,8 @@ static const MemoryRegionOps cirrus_vga_io_ops = {
     },
 };
 
-static void cirrus_init_common(CirrusVGAState * s, int device_id, int is_pci,
+static void cirrus_init_common(CirrusVGAState *s, Object *owner,
+                               int device_id, int is_pci,
                                MemoryRegion *system_memory,
                                MemoryRegion *system_io)
 {
@@ -2841,21 +2841,22 @@ static void cirrus_init_common(CirrusVGAState * s, int device_id, int is_pci,
     }
 
     /* Register ioport 0x3b0 - 0x3df */
-    memory_region_init_io(&s->cirrus_vga_io, &cirrus_vga_io_ops, s,
+    memory_region_init_io(&s->cirrus_vga_io, owner, &cirrus_vga_io_ops, s,
                           "cirrus-io", 0x30);
     memory_region_add_subregion(system_io, 0x3b0, &s->cirrus_vga_io);
 
-    memory_region_init(&s->low_mem_container,
+    memory_region_init(&s->low_mem_container, owner,
                        "cirrus-lowmem-container",
                        0x20000);
 
-    memory_region_init_io(&s->low_mem, &cirrus_vga_mem_ops, s,
+    memory_region_init_io(&s->low_mem, owner, &cirrus_vga_mem_ops, s,
                           "cirrus-low-memory", 0x20000);
     memory_region_add_subregion(&s->low_mem_container, 0, &s->low_mem);
     for (i = 0; i < 2; ++i) {
         static const char *names[] = { "vga.bank0", "vga.bank1" };
         MemoryRegion *bank = &s->cirrus_bank[i];
-        memory_region_init_alias(bank, names[i], &s->vga.vram, 0, 0x8000);
+        memory_region_init_alias(bank, owner, names[i], &s->vga.vram,
+                                 0, 0x8000);
         memory_region_set_enabled(bank, false);
         memory_region_add_subregion_overlap(&s->low_mem_container, i * 0x8000,
                                             bank, 1);
@@ -2867,13 +2868,13 @@ static void cirrus_init_common(CirrusVGAState * s, int device_id, int is_pci,
     memory_region_set_coalescing(&s->low_mem);
 
     /* I/O handler for LFB */
-    memory_region_init_io(&s->cirrus_linear_io, &cirrus_linear_io_ops, s,
+    memory_region_init_io(&s->cirrus_linear_io, owner, &cirrus_linear_io_ops, s,
                           "cirrus-linear-io", s->vga.vram_size_mb
                                               * 1024 * 1024);
     memory_region_set_flush_coalesced(&s->cirrus_linear_io);
 
     /* I/O handler for LFB */
-    memory_region_init_io(&s->cirrus_linear_bitblt_io,
+    memory_region_init_io(&s->cirrus_linear_bitblt_io, owner,
                           &cirrus_linear_bitblt_io_ops,
                           s,
                           "cirrus-bitblt-mmio",
@@ -2881,7 +2882,7 @@ static void cirrus_init_common(CirrusVGAState * s, int device_id, int is_pci,
     memory_region_set_flush_coalesced(&s->cirrus_linear_bitblt_io);
 
     /* I/O handler for memory-mapped I/O */
-    memory_region_init_io(&s->cirrus_mmio_io, &cirrus_mmio_io_ops, s,
+    memory_region_init_io(&s->cirrus_mmio_io, owner, &cirrus_mmio_io_ops, s,
                           "cirrus-mmio", CIRRUS_PNPMMIO_SIZE);
     memory_region_set_flush_coalesced(&s->cirrus_mmio_io);
 
@@ -2907,19 +2908,20 @@ static void cirrus_init_common(CirrusVGAState * s, int device_id, int is_pci,
  *
  ***************************************/
 
-static int vga_initfn(ISADevice *dev)
+static void isa_cirrus_vga_realizefn(DeviceState *dev, Error **errp)
 {
+    ISADevice *isadev = ISA_DEVICE(dev);
     ISACirrusVGAState *d = ISA_CIRRUS_VGA(dev);
     VGACommonState *s = &d->cirrus_vga.vga;
 
-    vga_common_init(s);
-    cirrus_init_common(&d->cirrus_vga, CIRRUS_ID_CLGD5430, 0,
-                       isa_address_space(dev), isa_address_space_io(dev));
-    s->con = graphic_console_init(DEVICE(dev), s->hw_ops, s);
+    vga_common_init(s, OBJECT(dev));
+    cirrus_init_common(&d->cirrus_vga, OBJECT(dev), CIRRUS_ID_CLGD5430, 0,
+                       isa_address_space(isadev),
+                       isa_address_space_io(isadev));
+    s->con = graphic_console_init(dev, s->hw_ops, s);
     rom_add_vga(VGABIOS_CIRRUS_FILENAME);
     /* XXX ISA-LFB support */
     /* FIXME not qdev yet */
-    return 0;
 }
 
 static Property isa_cirrus_vga_properties[] = {
@@ -2930,12 +2932,12 @@ static Property isa_cirrus_vga_properties[] = {
 
 static void isa_cirrus_vga_class_init(ObjectClass *klass, void *data)
 {
-    ISADeviceClass *k = ISA_DEVICE_CLASS(klass);
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->vmsd  = &vmstate_cirrus_vga;
-    k->init   = vga_initfn;
+    dc->realize = isa_cirrus_vga_realizefn;
     dc->props = isa_cirrus_vga_properties;
+    set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
 }
 
 static const TypeInfo isa_cirrus_vga_info = {
@@ -2959,14 +2961,14 @@ static int pci_cirrus_vga_initfn(PCIDevice *dev)
      int16_t device_id = pc->device_id;
 
      /* setup VGA */
-     vga_common_init(&s->vga);
-     cirrus_init_common(s, device_id, 1, pci_address_space(dev),
+     vga_common_init(&s->vga, OBJECT(dev));
+     cirrus_init_common(s, OBJECT(dev), device_id, 1, pci_address_space(dev),
                         pci_address_space_io(dev));
      s->vga.con = graphic_console_init(DEVICE(dev), s->vga.hw_ops, &s->vga);
 
      /* setup PCI */
 
-    memory_region_init(&s->pci_bar, "cirrus-pci-bar0", 0x2000000);
+    memory_region_init(&s->pci_bar, OBJECT(dev), "cirrus-pci-bar0", 0x2000000);
 
     /* XXX: add byte swapping apertures */
     memory_region_add_subregion(&s->pci_bar, 0, &s->cirrus_linear_io);
@@ -3001,6 +3003,7 @@ static void cirrus_vga_class_init(ObjectClass *klass, void *data)
     k->vendor_id = PCI_VENDOR_ID_CIRRUS;
     k->device_id = CIRRUS_ID_CLGD5446;
     k->class_id = PCI_CLASS_DISPLAY_VGA;
+    set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
     dc->desc = "Cirrus CLGD 54xx VGA";
     dc->vmsd = &vmstate_pci_cirrus_vga;
     dc->props = pci_vga_cirrus_properties;

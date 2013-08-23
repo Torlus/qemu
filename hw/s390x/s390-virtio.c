@@ -41,10 +41,10 @@
 //#define DEBUG_S390
 
 #ifdef DEBUG_S390
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { fprintf(stderr, fmt, ## __VA_ARGS__); } while (0)
 #else
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { } while (0)
 #endif
 
@@ -256,7 +256,7 @@ static void s390_init(QEMUMachineInitArgs *args)
     s390_virtio_register_hcalls();
 
     /* allocate RAM */
-    memory_region_init_ram(ram, "s390.ram", my_ram_size);
+    memory_region_init_ram(ram, NULL, "s390.ram", my_ram_size);
     vmstate_register_ram_global(ram);
     memory_region_add_subregion(sysmem, 0, ram);
 

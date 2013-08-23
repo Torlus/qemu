@@ -28,7 +28,9 @@
 #include <inttypes.h>
 #include "qemu/osdep.h"
 #include "qemu/queue.h"
+#ifndef CONFIG_USER_ONLY
 #include "exec/hwaddr.h"
+#endif
 
 #ifndef TARGET_LONG_BITS
 #error TARGET_LONG_BITS must be defined before including this header
@@ -99,7 +101,7 @@ typedef struct CPUTLBEntry {
                    sizeof(uintptr_t))];
 } CPUTLBEntry;
 
-extern int CPUTLBEntry_wrong_size[sizeof(CPUTLBEntry) == (1 << CPU_TLB_ENTRY_BITS) ? 1 : -1];
+QEMU_BUILD_BUG_ON(sizeof(CPUTLBEntry) != (1 << CPU_TLB_ENTRY_BITS));
 
 #define CPU_COMMON_TLB \
     /* The meaning of the MMU modes is defined in the target code. */   \
@@ -152,8 +154,6 @@ typedef struct CPUWatchpoint {
                                      memory was accessed */             \
     CPU_COMMON_TLB                                                      \
     struct TranslationBlock *tb_jmp_cache[TB_JMP_CACHE_SIZE];           \
-    /* buffer for temporaries in the code generator */                  \
-    long temp_buf[CPU_TEMP_BUF_NLONGS];                                 \
                                                                         \
     int64_t icount_extra; /* Instructions until next timer event.  */   \
     /* Number of cycles left, with interrupt flag in high bit.          \
@@ -168,18 +168,14 @@ typedef struct CPUWatchpoint {
     /* from this point: preserved by CPU reset */                       \
     /* ice debug support */                                             \
     QTAILQ_HEAD(breakpoints_head, CPUBreakpoint) breakpoints;            \
-    int singlestep_enabled;                                             \
                                                                         \
     QTAILQ_HEAD(watchpoints_head, CPUWatchpoint) watchpoints;            \
     CPUWatchpoint *watchpoint_hit;                                      \
-                                                                        \
-    struct GDBRegisterState *gdb_regs;                                  \
                                                                         \
     /* Core interrupt code */                                           \
     sigjmp_buf jmp_env;                                                 \
     int exception_index;                                                \
                                                                         \
-    CPUArchState *next_cpu; /* next CPU sharing TB cache */                 \
     /* user data */                                                     \
     void *opaque;                                                       \
                                                                         \

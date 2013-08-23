@@ -1397,7 +1397,7 @@ static VMStateDescription usb_device_vmstate = {
 };
 
 static VMStateDescription ccid_vmstate = {
-    .name = CCID_DEV_NAME,
+    .name = "usb-ccid",
     .version_id = 1,
     .minimum_version_id = 1,
     .post_load = ccid_post_load,
@@ -1449,6 +1449,7 @@ static void ccid_class_initfn(ObjectClass *klass, void *data)
     dc->desc = "CCID Rev 1.1 smartcard reader";
     dc->vmsd = &ccid_vmstate;
     dc->props = ccid_properties;
+    set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
 }
 
 static const TypeInfo ccid_info = {

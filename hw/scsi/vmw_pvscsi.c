@@ -389,7 +389,7 @@ pvscsi_process_completion_queue(void *opaque)
         QTAILQ_REMOVE(&s->completion_queue, pvscsi_req, next);
         pvscsi_cmp_ring_put(s, &pvscsi_req->cmp);
         g_free(pvscsi_req);
-        has_completed++;
+        has_completed = true;
     }
 
     if (has_completed) {
@@ -617,7 +617,7 @@ pvscsi_build_sglist(PVSCSIState *s, PVSCSIRequest *r)
 {
     PCIDevice *d = PCI_DEVICE(s);
 
-    qemu_sglist_init(&r->sgl, 1, pci_dma_context(d));
+    pci_dma_sglist_init(&r->sgl, d, 1);
     if (r->req.flags & PVSCSI_FLAG_CMD_WITH_SG_LIST) {
         pvscsi_convert_sglist(r);
     } else {
@@ -1075,7 +1075,7 @@ pvscsi_init(PCIDevice *pci_dev)
     /* Interrupt pin A */
     pci_config_set_interrupt_pin(pci_dev->config, 1);
 
-    memory_region_init_io(&s->io_space, &pvscsi_ops, s,
+    memory_region_init_io(&s->io_space, OBJECT(s), &pvscsi_ops, s,
                           "pvscsi-io", PVSCSI_MEM_SPACE_SIZE);
     pci_register_bar(pci_dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->io_space);
 
@@ -1136,7 +1136,7 @@ pvscsi_post_load(void *opaque, int version_id)
 }
 
 static const VMStateDescription vmstate_pvscsi = {
-    .name = TYPE_PVSCSI,
+    .name = "pvscsi",
     .version_id = 0,
     .minimum_version_id = 0,
     .minimum_version_id_old = 0,
@@ -1197,11 +1197,12 @@ static void pvscsi_class_init(ObjectClass *klass, void *data)
     dc->reset = pvscsi_reset;
     dc->vmsd = &vmstate_pvscsi;
     dc->props = pvscsi_properties;
+    set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
     k->config_write = pvscsi_write_config;
 }
 
 static const TypeInfo pvscsi_info = {
-    .name          = "pvscsi",
+    .name          = TYPE_PVSCSI,
     .parent        = TYPE_PCI_DEVICE,
     .instance_size = sizeof(PVSCSIState),
     .class_init    = pvscsi_class_init,

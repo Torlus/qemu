@@ -106,8 +106,12 @@
 
 #define R_MAX (R_TTRIG + 1)
 
+#define TYPE_CADENCE_UART "cadence_uart"
+#define CADENCE_UART(obj) OBJECT_CHECK(UartState, (obj), TYPE_CADENCE_UART)
+
 typedef struct {
-    SysBusDevice busdev;
+    SysBusDevice parent_obj;
+
     MemoryRegion iomem;
     uint32_t r[R_MAX];
     uint8_t r_fifo[RX_FIFO_SIZE];
@@ -157,7 +161,9 @@ static void uart_rx_reset(UartState *s)
 {
     s->rx_wpos = 0;
     s->rx_count = 0;
-    qemu_chr_accept_input(s->chr);
+    if (s->chr) {
+        qemu_chr_accept_input(s->chr);
+    }
 
     s->r[R_SR] |= UART_SR_INTR_REMPTY;
     s->r[R_SR] &= ~UART_SR_INTR_RFUL;
@@ -297,9 +303,7 @@ static void uart_write_tx_fifo(UartState *s, const uint8_t *buf, int size)
         return;
     }
 
-    while (size) {
-        size -= qemu_chr_fe_write(s->chr, buf, size);
-    }
+    qemu_chr_fe_write_all(s->chr, buf, size);
 }
 
 static void uart_receive(void *opaque, const uint8_t *buf, int size)
@@ -442,9 +446,9 @@ static void cadence_uart_reset(UartState *s)
 
 static int cadence_uart_init(SysBusDevice *dev)
 {
-    UartState *s = FROM_SYSBUS(UartState, dev);
+    UartState *s = CADENCE_UART(dev);
 
-    memory_region_init_io(&s->iomem, &uart_ops, s, "uart", 0x1000);
+    memory_region_init_io(&s->iomem, OBJECT(s), &uart_ops, s, "uart", 0x1000);
     sysbus_init_mmio(dev, &s->iomem);
     sysbus_init_irq(dev, &s->irq);
 
@@ -504,7 +508,7 @@ static void cadence_uart_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo cadence_uart_info = {
-    .name          = "cadence_uart",
+    .name          = TYPE_CADENCE_UART,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(UartState),
     .class_init    = cadence_uart_class_init,

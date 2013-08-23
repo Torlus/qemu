@@ -23,8 +23,15 @@
 
 /* A15MP private memory region.  */
 
+#define TYPE_A15MPCORE_PRIV "a15mpcore_priv"
+#define A15MPCORE_PRIV(obj) \
+    OBJECT_CHECK(A15MPPrivState, (obj), TYPE_A15MPCORE_PRIV)
+
 typedef struct A15MPPrivState {
-    SysBusDevice busdev;
+    /*< private >*/
+    SysBusDevice parent_obj;
+    /*< public >*/
+
     uint32_t num_cpu;
     uint32_t num_irq;
     MemoryRegion container;
@@ -39,9 +46,11 @@ static void a15mp_priv_set_irq(void *opaque, int irq, int level)
 
 static int a15mp_priv_init(SysBusDevice *dev)
 {
-    A15MPPrivState *s = FROM_SYSBUS(A15MPPrivState, dev);
+    A15MPPrivState *s = A15MPCORE_PRIV(dev);
     SysBusDevice *busdev;
     const char *gictype = "arm_gic";
+    int i;
+    CPUState *cpu;
 
     if (kvm_irqchip_in_kernel()) {
         gictype = "kvm-arm-gic";
@@ -58,7 +67,23 @@ static int a15mp_priv_init(SysBusDevice *dev)
     sysbus_pass_irq(dev, busdev);
 
     /* Pass through inbound GPIO lines to the GIC */
-    qdev_init_gpio_in(&s->busdev.qdev, a15mp_priv_set_irq, s->num_irq - 32);
+    qdev_init_gpio_in(DEVICE(dev), a15mp_priv_set_irq, s->num_irq - 32);
+
+    /* Wire the outputs from each CPU's generic timer to the
+     * appropriate GIC PPI inputs
+     */
+    for (i = 0, cpu = first_cpu; i < s->num_cpu; i++, cpu = cpu->next_cpu) {
+        DeviceState *cpudev = DEVICE(cpu);
+        int ppibase = s->num_irq - 32 + i * 32;
+        /* physical timer; we wire it up to the non-secure timer's ID,
+         * since a real A15 always has TrustZone but QEMU doesn't.
+         */
+        qdev_connect_gpio_out(cpudev, 0,
+                              qdev_get_gpio_in(s->gic, ppibase + 30));
+        /* virtual timer */
+        qdev_connect_gpio_out(cpudev, 1,
+                              qdev_get_gpio_in(s->gic, ppibase + 27));
+    }
 
     /* Memory map (addresses are offsets from PERIPHBASE):
      *  0x0000-0x0fff -- reserved
@@ -68,7 +93,8 @@ static int a15mp_priv_init(SysBusDevice *dev)
      *  0x5000-0x5fff -- GIC virtual interface control (not modelled)
      *  0x6000-0x7fff -- GIC virtual CPU interface (not modelled)
      */
-    memory_region_init(&s->container, "a15mp-priv-container", 0x8000);
+    memory_region_init(&s->container, OBJECT(s),
+                       "a15mp-priv-container", 0x8000);
     memory_region_add_subregion(&s->container, 0x1000,
                                 sysbus_mmio_get_region(busdev, 0));
     memory_region_add_subregion(&s->container, 0x2000,
@@ -81,12 +107,12 @@ static int a15mp_priv_init(SysBusDevice *dev)
 static Property a15mp_priv_properties[] = {
     DEFINE_PROP_UINT32("num-cpu", A15MPPrivState, num_cpu, 1),
     /* The Cortex-A15MP may have anything from 0 to 224 external interrupt
-     * IRQ lines (with another 32 internal). We default to 64+32, which
+     * IRQ lines (with another 32 internal). We default to 128+32, which
      * is the number provided by the Cortex-A15MP test chip in the
      * Versatile Express A15 development board.
      * Other boards may differ and should set this property appropriately.
      */
-    DEFINE_PROP_UINT32("num-irq", A15MPPrivState, num_irq, 96),
+    DEFINE_PROP_UINT32("num-irq", A15MPPrivState, num_irq, 160),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -100,7 +126,7 @@ static void a15mp_priv_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo a15mp_priv_info = {
-    .name  = "a15mpcore_priv",
+    .name  = TYPE_A15MPCORE_PRIV,
     .parent = TYPE_SYS_BUS_DEVICE,
     .instance_size  = sizeof(A15MPPrivState),
     .class_init = a15mp_priv_class_init,

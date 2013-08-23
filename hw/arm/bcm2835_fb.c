@@ -56,6 +56,9 @@
 
 bcm2835_fb_type bcm2835_fb;
 
+#define TYPE_BCM2835_FB "bcm2835_fb"
+#define BCM2835_FB(obj) OBJECT_CHECK(bcm2835_fb_state, (obj), TYPE_BCM2835_FB)
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -312,10 +315,12 @@ static const GraphicHwOps vgafb_ops = {
     .gfx_update  = fb_update_display,
 };
 
-static int bcm2835_fb_init(SysBusDevice *dev)
+static int bcm2835_fb_init(SysBusDevice *sbd)
 {
-    bcm2835_fb_state *s = FROM_SYSBUS(bcm2835_fb_state, dev);
-    
+    // bcm2835_fb_state *s = FROM_SYSBUS(bcm2835_fb_state, dev);
+    DeviceState *dev = DEVICE(sbd);
+    bcm2835_fb_state *s = BCM2835_FB(dev);
+
     s->pending = 0;
     
     // bcm2835_fb.invalidate = 0;
@@ -341,14 +346,14 @@ static int bcm2835_fb_init(SysBusDevice *dev)
     bcm2835_fb.invalidate = 1;
     bcm2835_fb.lock = 1;
     
-    sysbus_init_irq(dev, &s->mbox_irq);
+    sysbus_init_irq(sbd, &s->mbox_irq);
     
-    bcm2835_fb.con = graphic_console_init(DEVICE(dev), &vgafb_ops, s);
+    bcm2835_fb.con = graphic_console_init(dev, &vgafb_ops, s);
     bcm2835_fb.lock = 0;
 
-    memory_region_init_io(&s->iomem, &bcm2835_fb_ops, s, "bcm2835_fb", 0x10);
-    sysbus_init_mmio(dev, &s->iomem);
-    vmstate_register(&dev->qdev, -1, &vmstate_bcm2835_fb, s);
+    memory_region_init_io(&s->iomem, OBJECT(s), &bcm2835_fb_ops, s, "bcm2835_fb", 0x10);
+    sysbus_init_mmio(sbd, &s->iomem);
+    vmstate_register(dev, -1, &vmstate_bcm2835_fb, s);
 
     return 0;
 }

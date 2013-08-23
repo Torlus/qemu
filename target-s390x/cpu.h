@@ -149,16 +149,6 @@ typedef struct CPUS390XState {
 
 #include "cpu-qom.h"
 
-#if defined(CONFIG_USER_ONLY)
-static inline void cpu_clone_regs(CPUS390XState *env, target_ulong newsp)
-{
-    if (newsp) {
-        env->regs[15] = newsp;
-    }
-    env->regs[2] = 0;
-}
-#endif
-
 /* distinguish between 24 bit and 31 bit addressing */
 #define HIGH_ORDER_BIT 0x80000000
 
@@ -514,12 +504,6 @@ static inline bool css_present(uint8_t cssid)
     return false;
 }
 #endif
-
-static inline void cpu_set_tls(CPUS390XState *env, target_ulong newtls)
-{
-    env->aregs[0] = newtls >> 32;
-    env->aregs[1] = newtls & 0xffffffffULL;
-}
 
 #define cpu_init(model) (&cpu_s390x_init(model)->env)
 #define cpu_exec cpu_s390x_exec
@@ -1057,11 +1041,6 @@ static inline bool cpu_has_work(CPUState *cpu)
         (env->psw.mask & PSW_MASK_EXT);
 }
 
-static inline void cpu_pc_from_tb(CPUS390XState *env, TranslationBlock* tb)
-{
-    env->psw.addr = tb->pc;
-}
-
 /* fpu_helper.c */
 uint32_t set_cc_nz_f32(float32 v);
 uint32_t set_cc_nz_f64(float64 v);
@@ -1081,6 +1060,8 @@ void kvm_s390_io_interrupt(S390CPU *cpu, uint16_t subchannel_id,
 void kvm_s390_crw_mchk(S390CPU *cpu);
 void kvm_s390_enable_css_support(S390CPU *cpu);
 int kvm_s390_get_registers_partial(CPUState *cpu);
+int kvm_s390_assign_subch_ioeventfd(EventNotifier *notifier, uint32_t sch,
+                                    int vq, bool assign);
 #else
 static inline void kvm_s390_io_interrupt(S390CPU *cpu,
                                         uint16_t subchannel_id,
@@ -1096,6 +1077,12 @@ static inline void kvm_s390_enable_css_support(S390CPU *cpu)
 {
 }
 static inline int kvm_s390_get_registers_partial(CPUState *cpu)
+{
+    return -ENOSYS;
+}
+static inline int kvm_s390_assign_subch_ioeventfd(EventNotifier *notifier,
+                                                  uint32_t sch, int vq,
+                                                  bool assign)
 {
     return -ENOSYS;
 }
@@ -1122,6 +1109,17 @@ static inline void s390_crw_mchk(S390CPU *cpu)
         kvm_s390_crw_mchk(cpu);
     } else {
         cpu_inject_crw_mchk(cpu);
+    }
+}
+
+static inline int s390_assign_subch_ioeventfd(EventNotifier *notifier,
+                                              uint32_t sch_id, int vq,
+                                              bool assign)
+{
+    if (kvm_enabled()) {
+        return kvm_s390_assign_subch_ioeventfd(notifier, sch_id, vq, assign);
+    } else {
+        return -ENOSYS;
     }
 }
 

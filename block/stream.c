@@ -57,6 +57,11 @@ static void close_unused_images(BlockDriverState *top, BlockDriverState *base,
     BlockDriverState *intermediate;
     intermediate = top->backing_hd;
 
+    /* Must assign before bdrv_delete() to prevent traversing dangling pointer
+     * while we delete backing image instances.
+     */
+    top->backing_hd = base;
+
     while (intermediate) {
         BlockDriverState *unused;
 
@@ -70,7 +75,6 @@ static void close_unused_images(BlockDriverState *top, BlockDriverState *base,
         unused->backing_hd = NULL;
         bdrv_delete(unused);
     }
-    top->backing_hd = base;
 }
 
 static void coroutine_fn stream_run(void *opaque)
@@ -198,7 +202,7 @@ static void stream_set_speed(BlockJob *job, int64_t speed, Error **errp)
     ratelimit_set_speed(&s->limit, speed / BDRV_SECTOR_SIZE, SLICE_TIME);
 }
 
-static BlockJobType stream_job_type = {
+static const BlockJobType stream_job_type = {
     .instance_size = sizeof(StreamBlockJob),
     .job_type      = "stream",
     .set_speed     = stream_set_speed,

@@ -93,7 +93,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     
     MemoryRegion *mr;
     
-    qemu_irq *cpu_pic;
+    // qemu_irq *cpu_pic;
     qemu_irq pic[72];
     qemu_irq mbox_irq[MBOX_CHAN_COUNT];
 
@@ -112,19 +112,19 @@ static void raspi_init(QEMUMachineInitArgs *args)
     
     bootloader_100[7] = bcm2835_vcram_base; /* Write real RAM size in ATAG structure */
 
-    memory_region_init_ram(bcm2835_ram, "raspi.ram", bcm2835_vcram_base);
+    memory_region_init_ram(bcm2835_ram, NULL, "raspi.ram", bcm2835_vcram_base);
     vmstate_register_ram_global(bcm2835_ram);
 
-    memory_region_init_ram(bcm2835_vcram, "vcram.ram", VCRAM_SIZE);
+    memory_region_init_ram(bcm2835_vcram, NULL, "vcram.ram", VCRAM_SIZE);
     vmstate_register_ram_global(bcm2835_vcram);
     
     memory_region_add_subregion(sysmem, (0 << 30), bcm2835_ram);
     memory_region_add_subregion(sysmem, (0 << 30) + bcm2835_vcram_base, 
         bcm2835_vcram);
     for(n = 1; n < 4; n++) {
-        memory_region_init_alias(&ram_alias[n], NULL, bcm2835_ram, 
+        memory_region_init_alias(&ram_alias[n], NULL, NULL, bcm2835_ram, 
             0, bcm2835_vcram_base);
-        memory_region_init_alias(&vcram_alias[n], NULL, bcm2835_vcram, 
+        memory_region_init_alias(&vcram_alias[n], NULL, NULL, bcm2835_vcram, 
             0, VCRAM_SIZE);
         memory_region_add_subregion(sysmem, (n << 30), &ram_alias[n]);
         memory_region_add_subregion(sysmem, (n << 30) + bcm2835_vcram_base, 
@@ -135,19 +135,23 @@ static void raspi_init(QEMUMachineInitArgs *args)
     dev = sysbus_create_simple("bcm2835_todo", BCM2708_PERI_BASE, NULL);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_todo_bus, NULL, mr, 
+    memory_region_init_alias(per_todo_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(BCM2708_PERI_BASE), 
         per_todo_bus);
 
     // Interrupt Controller
-    cpu_pic = arm_pic_init_cpu(cpu);
+    /* cpu_pic = arm_pic_init_cpu(cpu);
     dev = sysbus_create_varargs("bcm2835_ic", ARMCTRL_IC_BASE,
         cpu_pic[ARM_PIC_CPU_IRQ],
-        cpu_pic[ARM_PIC_CPU_FIQ], NULL);
+        cpu_pic[ARM_PIC_CPU_FIQ], NULL);*/
+    dev = sysbus_create_varargs("bcm2835_ic", ARMCTRL_IC_BASE,
+        qdev_get_gpio_in(DEVICE(cpu), ARM_CPU_IRQ),
+        qdev_get_gpio_in(DEVICE(cpu), ARM_CPU_FIQ), NULL);
+    
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_ic_bus, NULL, mr, 
+    memory_region_init_alias(per_ic_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(ARMCTRL_IC_BASE), 
         per_ic_bus);
@@ -159,7 +163,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     dev = sysbus_create_simple("pl011", UART0_BASE, pic[INTERRUPT_VC_UART]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_uart_bus, NULL, mr, 
+    memory_region_init_alias(per_uart_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(UART0_BASE), 
         per_uart_bus);
@@ -172,7 +176,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
             NULL);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_st_bus, NULL, mr, 
+    memory_region_init_alias(per_st_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(ST_BASE), 
         per_st_bus);
@@ -182,7 +186,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
         pic[INTERRUPT_ARM_TIMER]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_timer_bus, NULL, mr, 
+    memory_region_init_alias(per_timer_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(ARMCTRL_TIMER0_1_BASE), 
         per_timer_bus);
@@ -192,7 +196,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
         pic[INTERRUPT_VC_USB]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_usb_bus, NULL, mr, 
+    memory_region_init_alias(per_usb_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(USB_BASE), 
         per_usb_bus);
@@ -202,7 +206,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
         pic[INTERRUPT_HOSTPORT]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_mphi_bus, NULL, mr, 
+    memory_region_init_alias(per_mphi_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(MPHI_BASE), 
         per_mphi_bus);
@@ -213,7 +217,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
         pic[INTERRUPT_ARM_MAILBOX]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_sbm_bus, NULL, mr, 
+    memory_region_init_alias(per_sbm_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(ARMCTRL_0_SBM_BASE), 
         per_sbm_bus);
@@ -231,7 +235,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
         mbox_irq[MBOX_CHAN_POWER]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_power_bus, NULL, mr, 
+    memory_region_init_alias(per_power_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, 
         BUS_ADDR(ARMCTRL_0_SBM_BASE + 0x400 + (MBOX_CHAN_POWER<<4)), 
@@ -243,7 +247,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
         mbox_irq[MBOX_CHAN_FB]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_fb_bus, NULL, mr, 
+    memory_region_init_alias(per_fb_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, 
         BUS_ADDR(ARMCTRL_0_SBM_BASE + 0x400 + (MBOX_CHAN_FB<<4)), 
@@ -255,7 +259,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
         mbox_irq[MBOX_CHAN_PROPERTY]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_prop_bus, NULL, mr, 
+    memory_region_init_alias(per_prop_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, 
         BUS_ADDR(ARMCTRL_0_SBM_BASE + 0x400 + (MBOX_CHAN_PROPERTY<<4)), 
@@ -267,7 +271,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
         mbox_irq[MBOX_CHAN_VCHIQ]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_vchiq_bus, NULL, mr, 
+    memory_region_init_alias(per_vchiq_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, 
         BUS_ADDR(ARMCTRL_0_SBM_BASE + 0x400 + (MBOX_CHAN_VCHIQ<<4)), 
@@ -278,7 +282,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
         pic[INTERRUPT_VC_ARASANSDIO]);
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_emmc_bus, NULL, mr, 
+    memory_region_init_alias(per_emmc_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(EMMC_BASE), 
         per_emmc_bus);
@@ -291,12 +295,12 @@ static void raspi_init(QEMUMachineInitArgs *args)
     sysbus_mmio_map(s, 1, (BCM2708_PERI_BASE + 0xe05000));
     s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
-    memory_region_init_alias(per_dma1_bus, NULL, mr, 
+    memory_region_init_alias(per_dma1_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(DMA_BASE), 
         per_dma1_bus);
     mr = sysbus_mmio_get_region(s, 1);
-    memory_region_init_alias(per_dma2_bus, NULL, mr, 
+    memory_region_init_alias(per_dma2_bus, NULL, NULL, mr, 
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(BCM2708_PERI_BASE + 0xe05000), 
         per_dma2_bus);      

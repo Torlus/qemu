@@ -29,8 +29,12 @@ do { printf("imx_ccm: " fmt , ##args); } while (0)
 
 static int imx_ccm_post_load(void *opaque, int version_id);
 
-typedef struct {
-    SysBusDevice busdev;
+#define TYPE_IMX_CCM "imx_ccm"
+#define IMX_CCM(obj) OBJECT_CHECK(IMXCCMState, (obj), TYPE_IMX_CCM)
+
+typedef struct IMXCCMState {
+    SysBusDevice parent_obj;
+
     MemoryRegion iomem;
 
     uint32_t ccmr;
@@ -108,7 +112,7 @@ static const VMStateDescription vmstate_imx_ccm = {
 
 uint32_t imx_clock_frequency(DeviceState *dev, IMXClk clock)
 {
-    IMXCCMState *s = container_of(dev, IMXCCMState, busdev.qdev);
+    IMXCCMState *s = IMX_CCM(dev);
 
     switch (clock) {
     case NOCLK:
@@ -153,7 +157,7 @@ static void update_clocks(IMXCCMState *s)
      * approach
      */
 
-    if ((s->ccmr & CCMR_PRCS) == 1) {
+    if ((s->ccmr & CCMR_PRCS) == 2) {
         s->pll_refclk_freq = CKIL_FREQ * 1024;
     } else {
         s->pll_refclk_freq = CKIH_FREQ;
@@ -178,7 +182,7 @@ static void update_clocks(IMXCCMState *s)
 
 static void imx_ccm_reset(DeviceState *dev)
 {
-    IMXCCMState *s = container_of(dev, IMXCCMState, busdev.qdev);
+    IMXCCMState *s = IMX_CCM(dev);
 
     s->ccmr = 0x074b0b7b;
     s->pdr0 = 0xff870b48;
@@ -279,9 +283,10 @@ static const struct MemoryRegionOps imx_ccm_ops = {
 
 static int imx_ccm_init(SysBusDevice *dev)
 {
-    IMXCCMState *s = FROM_SYSBUS(typeof(*s), dev);
+    IMXCCMState *s = IMX_CCM(dev);
 
-    memory_region_init_io(&s->iomem, &imx_ccm_ops, s, "imx_ccm", 0x1000);
+    memory_region_init_io(&s->iomem, OBJECT(dev), &imx_ccm_ops, s,
+                          "imx_ccm", 0x1000);
     sysbus_init_mmio(dev, &s->iomem);
 
     return 0;
@@ -307,7 +312,7 @@ static void imx_ccm_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo imx_ccm_info = {
-    .name = "imx_ccm",
+    .name = TYPE_IMX_CCM,
     .parent = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(IMXCCMState),
     .class_init = imx_ccm_class_init,
