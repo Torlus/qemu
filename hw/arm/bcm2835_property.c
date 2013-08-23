@@ -12,7 +12,7 @@
 
 #include "bcm2835_common.h"
 
-#define LOG_REG_ACCESS
+//#define LOG_REG_ACCESS
 
 typedef struct {
     SysBusDevice busdev;

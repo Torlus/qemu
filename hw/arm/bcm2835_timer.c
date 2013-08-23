@@ -132,7 +132,7 @@ static void bcm2835_timer_write(void *opaque, hwaddr offset,
         if (s->control & CTRL_TIMER_EN) {
             ptimer_stop(s->timer);
         }
-        s->control = value & 0x00ff03ce;
+        s->control = value & 0x00ff03ae;
         
         freq = SYSCLOCK_FREQ;
         // freq /= ((s->control & CTRL_FRC_PS_MASK) >> CTRL_FRC_PS_SHIFT) + 1;
