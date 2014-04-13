@@ -54,7 +54,9 @@
 #include <gdk/gdkkeysyms.h>
 #include <glib/gi18n.h>
 #include <locale.h>
+#if defined(CONFIG_VTE)
 #include <vte/vte.h>
+#endif
 #include <math.h>
 
 #include "trace.h"
@@ -65,6 +67,10 @@
 #include "x_keymap.h"
 #include "keymaps.h"
 #include "sysemu/char.h"
+
+#if !defined(CONFIG_VTE)
+# define VTE_CHECK_VERSION(a, b, c) 0
+#endif
 
 #define MAX_VCS 10
 
@@ -1035,6 +1041,7 @@ static void gd_change_page(GtkNotebook *nb, gpointer arg1, guint arg2,
         gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(s->vga_item), TRUE);
     } else {
         VirtualConsole *vc = &s->vc[arg2 - 1];
+#if defined(CONFIG_VTE)
         VteTerminal *term = VTE_TERMINAL(vc->terminal);
         int width, height;
 
@@ -1043,6 +1050,10 @@ static void gd_change_page(GtkNotebook *nb, gpointer arg1, guint arg2,
 
         gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(vc->menu_item), TRUE);
         gtk_widget_set_size_request(vc->terminal, width, height);
+#else
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(vc->menu_item), TRUE);
+        gtk_widget_set_size_request(vc->terminal, 640, 480);
+#endif
     }
 
     gtk_widget_set_sensitive(s->grab_item, on_vga);
@@ -1088,7 +1099,7 @@ static int gd_vc_chr_write(CharDriverState *chr, const uint8_t *buf, int len)
 {
     VirtualConsole *vc = chr->opaque;
 
-    return write(vc->fd, buf, len);
+    return vc ? write(vc->fd, buf, len) : len;
 }
 
 static int nb_vcs;
@@ -1113,6 +1124,7 @@ void early_gtk_display_init(void)
     register_vc_handler(gd_vc_handler);
 }
 
+#if defined(CONFIG_VTE)
 static gboolean gd_vc_in(GIOChannel *chan, GIOCondition cond, void *opaque)
 {
     VirtualConsole *vc = opaque;
@@ -1128,10 +1140,12 @@ static gboolean gd_vc_in(GIOChannel *chan, GIOCondition cond, void *opaque)
 
     return TRUE;
 }
+#endif
 
 static GSList *gd_vc_init(GtkDisplayState *s, VirtualConsole *vc, int index, GSList *group,
                           GtkWidget *view_menu)
 {
+#if defined(CONFIG_VTE)
     const char *label;
     char buffer[32];
     char path[32];
@@ -1139,9 +1153,11 @@ static GSList *gd_vc_init(GtkDisplayState *s, VirtualConsole *vc, int index, GSL
     VtePty *pty;
 #endif
     GIOChannel *chan;
+#if defined(CONFIG_VTE)
     GtkWidget *scrolled_window;
     GtkAdjustment *vadjustment;
     int master_fd, slave_fd;
+#endif
 
     snprintf(buffer, sizeof(buffer), "vc%d", index);
     snprintf(path, sizeof(path), "<QEMU>/View/VC%d", index);
@@ -1182,12 +1198,14 @@ static GSList *gd_vc_init(GtkDisplayState *s, VirtualConsole *vc, int index, GSL
 
     vc->fd = slave_fd;
     vc->chr->opaque = vc;
+#if defined(CONFIG_VTE)
     vc->scrolled_window = scrolled_window;
 
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(vc->scrolled_window),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
 
     gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), scrolled_window, gtk_label_new(label));
+#endif
     g_signal_connect(vc->menu_item, "activate",
                      G_CALLBACK(gd_menu_switch_vc), s);
 
@@ -1201,6 +1219,7 @@ static GSList *gd_vc_init(GtkDisplayState *s, VirtualConsole *vc, int index, GSL
     chan = g_io_channel_unix_new(vc->fd);
     g_io_add_watch(chan, G_IO_IN, gd_vc_in, vc);
 
+#endif /* CONFIG_GTK */
     return group;
 }
 

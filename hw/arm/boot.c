@@ -210,6 +210,12 @@ static void set_kernel_args(const struct arm_boot_info *info)
         WRITE_WORD(p, info->initrd_start);
         WRITE_WORD(p, initrd_size);
     }
+    if (info->atag_revision) {
+        /* ATAG REVISION. */
+        WRITE_WORD(p, 3);
+        WRITE_WORD(p, 0x54410007);
+        WRITE_WORD(p, info->atag_revision);
+    }
     if (info->kernel_cmdline && *info->kernel_cmdline) {
         /* ATAG_CMDLINE */
         int cmdline_size;
@@ -446,10 +452,11 @@ void arm_load_kernel(ARMCPU *cpu, struct arm_boot_info *info)
     CPUState *cs = CPU(cpu);
     int kernel_size;
     int initrd_size;
+    bool no_loader = false;
+    CPUARMState *env = &cpu->env;
     int is_linux = 0;
     uint64_t elf_entry;
     hwaddr entry, kernel_load_offset;
-    int big_endian;
     static const ARMInsnFixup *primary_loader;
 
     /* Load the kernel.  */
@@ -480,12 +487,6 @@ void arm_load_kernel(ARMCPU *cpu, struct arm_boot_info *info)
     if (info->nb_cpus == 0)
         info->nb_cpus = 1;
 
-#ifdef TARGET_WORDS_BIGENDIAN
-    big_endian = 1;
-#else
-    big_endian = 0;
-#endif
-
     /* We want to put the initrd far enough into RAM that when the
      * kernel is uncompressed it will not clobber the initrd. However
      * on boards without much RAM we must ensure that we still leave
@@ -500,18 +501,29 @@ void arm_load_kernel(ARMCPU *cpu, struct arm_boot_info *info)
         MIN(info->ram_size / 2, 128 * 1024 * 1024);
 
     /* Assume that raw images are linux kernels, and ELF images are not.  */
+    /* If the filename contains 'vmlinux', assume ELF images are linux, too. */
+    is_linux = (strstr(info->kernel_filename, "vmlinux") != NULL);
     kernel_size = load_elf(info->kernel_filename, NULL, NULL, &elf_entry,
-                           NULL, NULL, big_endian, ELF_MACHINE, 1);
+                           NULL, NULL, env->bigendian, ELF_MACHINE, 1);
     entry = elf_entry;
     if (kernel_size < 0) {
         kernel_size = load_uimage(info->kernel_filename, &entry, NULL,
                                   &is_linux);
     }
     if (kernel_size < 0) {
+#if 0 // Next command breaks Versatile ARM board.
+        no_loader = (info->loader_start == 0);
+#endif
+        if (no_loader) {
+            kernel_load_offset = 0;
+        }
         entry = info->loader_start + kernel_load_offset;
         kernel_size = load_image_targphys(info->kernel_filename, entry,
                                           info->ram_size - kernel_load_offset);
         is_linux = 1;
+    } else if (entry == info->loader_start) {
+        /* Don't map bootloader memory if it conflicts with the kernel image. */
+        no_loader = true;
     }
     if (kernel_size < 0) {
         fprintf(stderr, "qemu: could not load kernel '%s'\n",
@@ -568,10 +580,13 @@ void arm_load_kernel(ARMCPU *cpu, struct arm_boot_info *info)
                 exit(1);
             }
         }
+
         fixupcontext[FIXUP_ENTRYPOINT] = entry;
 
-        write_bootloader("bootloader", info->loader_start,
-                         primary_loader, fixupcontext);
+        if (!no_loader) {
+            write_bootloader("bootloader", info->loader_start,
+                             primary_loader, fixupcontext);
+        }
 
         if (info->nb_cpus > 1) {
             info->write_secondary_boot(cpu, info);

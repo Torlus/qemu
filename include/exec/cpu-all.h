@@ -199,20 +199,20 @@ extern unsigned long reserved_va;
 #endif
 
 /* All direct uses of g2h and h2g need to go away for usermode softmmu.  */
-#define g2h(x) ((void *)((unsigned long)(target_ulong)(x) + GUEST_BASE))
+#define g2h(x) ((void *)((uintptr_t)(target_ulong)(x) + GUEST_BASE))
 
 #if HOST_LONG_BITS <= TARGET_VIRT_ADDR_SPACE_BITS
 #define h2g_valid(x) 1
 #else
 #define h2g_valid(x) ({ \
-    unsigned long __guest = (unsigned long)(x) - GUEST_BASE; \
+    uintptr_t __guest = (uintptr_t)(x) - GUEST_BASE; \
     (__guest < (1ul << TARGET_VIRT_ADDR_SPACE_BITS)) && \
     (!RESERVED_VA || (__guest < RESERVED_VA)); \
 })
 #endif
 
 #define h2g_nocheck(x) ({ \
-    unsigned long __ret = (unsigned long)(x) - GUEST_BASE; \
+    uintptr_t __ret = (uintptr_t)(x) - GUEST_BASE; \
     (abi_ulong)__ret; \
 })
 
@@ -350,7 +350,7 @@ extern uintptr_t qemu_host_page_mask;
 void page_dump(FILE *f);
 
 typedef int (*walk_memory_regions_fn)(void *, abi_ulong,
-                                      abi_ulong, unsigned long);
+                                      abi_ulong, abi_ulong);
 int walk_memory_regions(void *, walk_memory_regions_fn);
 
 int page_get_flags(target_ulong address);
