@@ -1449,6 +1449,7 @@ static gboolean gd_vc_in(VteTerminal *terminal, gchar *text, guint size,
     return TRUE;
 }
 
+#if defined(CONFIG_VTE)
 static GSList *gd_vc_vte_init(GtkDisplayState *s, VirtualConsole *vc,
                               CharDriverState *chr, int idx,
                               GSList *group, GtkWidget *view_menu)
