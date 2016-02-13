@@ -77,10 +77,32 @@ typedef struct {
 } bcm2835_dma_state;
 
 
+static void bcm2835_dma_step(dmachan *ch)
+{
+    uint32_t data = 0;
+    if (ch->ti & (1 << 11)) {
+        /* Ignore reads */
+    } else {
+        data = ldl_phys(&address_space_memory, ch->source_ad);
+    }
+    if (ch->ti & BCM2708_DMA_S_INC) {
+        ch->source_ad += 4;
+    }
+
+    if (ch->ti & (1 << 7)) {
+        /* Ignore writes */
+    } else {
+        stl_phys(&address_space_memory, ch->dest_ad, data);
+    }
+    if (ch->ti & BCM2708_DMA_D_INC) {
+        ch->dest_ad += 4;
+    }
+    ch->txfr_len -= 4;
+}
+
 static void bcm2835_dma_update(bcm2835_dma_state *s, int c)
 {
     dmachan *ch = &s->chan[c];
-    uint32_t data;
 
     if (!(s->enable & (1 << c))) {
         return;
@@ -95,28 +117,42 @@ static void bcm2835_dma_update(bcm2835_dma_state *s, int c)
         ch->stride = ldl_phys(&address_space_memory, ch->conblk_ad + 16);
         ch->nextconbk = ldl_phys(&address_space_memory, ch->conblk_ad + 20);
 
-        assert(!(ch->ti & BCM2708_DMA_TDMODE));
+        if(ch->ti & BCM2708_DMA_TDMODE) {
+            uint32_t xlength = ch->txfr_len & 0xffff;
+            uint32_t deststride;
+            uint32_t sourcestride;
 
-        while (ch->txfr_len != 0) {
-            data = 0;
-            if (ch->ti & (1 << 11)) {
-                /* Ignore reads */
+            if(ch->stride & (1 << 31)) { /* D_STRIDE < 0 */
+                deststride = (0xffff0000 | (ch->stride >> 16));
             } else {
-                data = ldl_phys(&address_space_memory, ch->source_ad);
-            }
-            if (ch->ti & BCM2708_DMA_S_INC) {
-                ch->source_ad += 4;
+                deststride = (ch->stride >> 16);
             }
 
-            if (ch->ti & (1 << 7)) {
-                /* Ignore writes */
+            if(ch->stride & (1 << 15)) { /* S_STRIDE < 0 */
+                sourcestride = (0xffff0000 | (ch->stride & 0xffff));
             } else {
-                stl_phys(&address_space_memory, ch->dest_ad, data);
+                sourcestride = (ch->stride & 0xffff);
             }
-            if (ch->ti & BCM2708_DMA_D_INC) {
-                ch->dest_ad += 4;
+
+            /* For each row */
+            while((ch->txfr_len >> 16) != 0xffff) {
+                /* Reset XLENGTH field */
+                ch->txfr_len &= 0xffff0000;
+                ch->txfr_len |= xlength;
+                
+                /* For each column */ 
+                while((ch->txfr_len & 0xffff) != 0) {
+                    bcm2835_dma_step(ch);
+                }
+
+                ch->dest_ad += deststride;
+                ch->source_ad += sourcestride;
+                ch->txfr_len -= (1 << 16);
             }
-            ch->txfr_len -= 4;
+        } else {
+            while (ch->txfr_len != 0) {
+                bcm2835_dma_step(ch);
+            }
         }
         ch->cs |= BCM2708_DMA_END;
         if (ch->ti & BCM2708_DMA_INT_EN) {
